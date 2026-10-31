@@ -304,9 +304,17 @@ export default class UsageBeamUITest extends Extension {
         assert(settings.get_string('default-provider') === 'claude', 'Closing loses provider selection');
         indicator.menu.close(NO_ANIMATION);
         const notifications = Main.extensionManager.lookup(UUID).stateObj._notifications;
-        notifications.show([{provider: 'Codex', label: '5h Session', threshold: 100}]);
-        await this._wait(600);
         const tray = Main.messageTray;
+        const waitForBanner = async matches => {
+            // Other desktop sources may already have a banner in the native queue.
+            // Keep the private seat active so those banners can expire normally.
+            for (let attempt = 0; attempt < 100 && !matches(tray._notification); attempt++)
+                await pressKey(Clutter.KEY_Control_L);
+            assert(matches(tray._notification), 'Expected notification did not reach the native banner');
+            await this._wait(350);
+        };
+        notifications.show([{provider: 'Codex', label: '5h Session', threshold: 100}]);
+        await waitForBanner(notification => notification?.source === notifications._source);
         const notification = tray._notification;
         assert(notification?.source === notifications._source, 'Usage notification was not displayed');
         assert(tray._banner.has_style_class_name('usagebeam-toast'), 'Usage toast keeps the large default size');
@@ -319,7 +327,7 @@ export default class UsageBeamUITest extends Extension {
         assert(notifications._timers.size === 0, 'Dismissed notification retains a timer');
         await this._wait(300);
         Main.notify('Other application', 'Unaffected notification');
-        await this._wait(500);
+        await waitForBanner(notification => notification?.title === 'Other application');
         assert(!tray._banner.has_style_class_name('usagebeam-toast'), 'Usage toast styling leaks to other sources');
         tray._notification.destroy();
         await this._wait(300);

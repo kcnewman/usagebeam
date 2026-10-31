@@ -294,15 +294,22 @@ let failed = false;
             'new GLib.MainLoop(null, false).run();\n');
         GLib.chmod(mockCodex, 0o700);
         const collectorCancellation = new Gio.Cancellable();
+        let collectorError = null;
         const collectorShutdown = runCommand({argv: ['/usr/bin/gjs', '-m',
             buildPath(GLib.get_current_dir(), 'src', 'collector', 'main.js'), 'codex'], environment: {
             PATH: `${mockBin}:/usr/bin:/bin`, CODEX_HOME: buildPath(scratch, 'shutdown-history'),
             XDG_CACHE_HOME: buildPath(scratch, 'shutdown-cache'), USAGEBEAM_MOCK_PID: childPidPath,
-        }}, {cancellable: collectorCancellation, gracefulCancellation: true});
+        }}, {cancellable: collectorCancellation, gracefulCancellation: true}).catch(error => {
+            collectorError = error;
+        });
         try {
             await new Promise((resolve, reject) => {
                 let attempts = 0;
                 GLib.timeout_add(GLib.PRIORITY_DEFAULT, 20, () => {
+                    if (collectorError) {
+                        reject(new Error(`Collector exited before provider startup: ${collectorError.code}`));
+                        return GLib.SOURCE_REMOVE;
+                    }
                     if (Gio.File.new_for_path(childPidPath).query_exists(null)) {
                         resolve();
                         return GLib.SOURCE_REMOVE;
@@ -316,7 +323,7 @@ let failed = false;
             });
         } finally {
             collectorCancellation.cancel();
-            await collectorShutdown.catch(() => {});
+            await collectorShutdown;
         }
         const [, pidBytes] = GLib.file_get_contents(childPidPath);
         const childPid = new TextDecoder().decode(pidBytes).trim();
