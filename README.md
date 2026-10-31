@@ -23,7 +23,7 @@ Requires **GNOME Shell 50** and a signed-in [Codex CLI](https://github.com/opena
 or [Claude Code](https://code.claude.com/docs/en/setup). A desktop terminal is
 needed for the terminal shortcut; `xdg-terminal-exec` is preferred when installed.
 
-Download the ZIP from [GitHub Releases](https://github.com/oo7kc/usagebeam/releases/latest),
+Download the ZIP from [GitHub Releases](https://github.com/kcnewman/usagebeam/releases/latest),
 then install it:
 
 ```sh
@@ -84,7 +84,7 @@ gnome-extensions uninstall usagebeam@oo7kc.github.io
 ```
 
 For source builds and maintenance, see [Development](docs/development.md).
-Report problems in [GitHub Issues](https://github.com/oo7kc/usagebeam/issues).
+Report problems in [GitHub Issues](https://github.com/kcnewman/usagebeam/issues).
 
 Independent software, unaffiliated with OpenAI or Anthropic. Inspired by the
 [Omarchy Agents plugin](https://github.com/omacom/omarchy) and

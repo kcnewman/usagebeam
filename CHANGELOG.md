@@ -11,4 +11,4 @@
   build tooling, and superseded screenshots and documentation.
 
 Earlier prereleases remain available in
-[GitHub Releases](https://github.com/oo7kc/usagebeam/releases).
+[GitHub Releases](https://github.com/kcnewman/usagebeam/releases).
