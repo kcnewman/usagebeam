@@ -7,15 +7,16 @@ const bounds = actor => {
     return {x, y, width, height};
 };
 
-export async function runStress({indicator, records, service, settings, assert, wait, screenshot, cycles}) {
+export async function runStress({indicator, records, service, settings, assert, wait, screenshot, animation, cycles}) {
     const codex = indicator._providers.get('codex');
     const original = JSON.parse(JSON.stringify(records.codex));
     records.codex.limits.windows = Array.from({length: 32}, (_, index) => ({...original.limits.windows[0],
         id: `synthetic-${index}`, label: `Quota ${index + 1}`}));
     records.codex.history.models = Array.from({length: 48}, (_, index) => ({...original.history.models[0],
         model: `synthetic-model-${index}-${'long-name-'.repeat(8)}`}));
+    records.codex.limits.windows[0].label = 'Very long quota heading '.repeat(6);
     indicator.render();
-    codex.item.menu.open(false);
+    codex.item.menu.open(animation);
     codex.activity.activate();
     await wait(350);
     const work = Main.layoutManager.getWorkAreaForMonitor(Main.layoutManager.primaryIndex);
@@ -26,10 +27,17 @@ export async function runStress({indicator, records, service, settings, assert, 
     };
     assert(fit(indicator.menu.actor), `Long-content popup exceeds work area: ${JSON.stringify(bounds(indicator.menu.actor))}`);
     assert(fit(indicator._terminalButton), 'Long-content popup hides the footer');
+    const popup = bounds(indicator.menu.actor);
+    const fitsHorizontally = actor => {
+        const box = bounds(actor);
+        return box.x >= popup.x && box.x + box.width <= popup.x + popup.width;
+    };
+    assert(codex.quotas.every(row => fitsHorizontally(row.valueLabel) && fitsHorizontally(row.resetLabel)),
+        'Long quota text displaces a countdown or percentage');
     const scroll = codex.item.menu.actor;
     assert(scroll instanceof St.ScrollView, 'Provider must provide one native scroll area');
-    assert(codex.details.box.get_children().length >= 55, 'Long activity lists lose records');
-    const lastRow = codex.item.menu.box.get_last_child();
+    assert(codex.details.box.get_children().length === 48, 'Long model lists lose records');
+    const lastRow = codex.details.box.get_last_child();
     lastRow.grab_key_focus();
     scroll.vadjustment.value = scroll.vadjustment.upper;
     await wait();
@@ -37,22 +45,33 @@ export async function runStress({indicator, records, service, settings, assert, 
     await screenshot('long-content');
     const longContent = bounds(scroll);
     records.codex = original;
+    records.codex.limits.status = 'partial';
+    records.codex.limits.message = `Account information unavailable. ${'Long explanatory text '.repeat(12)}${'x'.repeat(100)}`;
+    indicator.render();
+    await wait();
+    assert(fit(indicator.menu.actor), 'Wrapped explanatory text exceeds the work area');
+    const message = codex.item.menu.box.get_children().find(row => row.has_style_class_name('usagebeam-message'));
+    assert(message && fitsHorizontally(message.label) && message.label.height > message.label.clutter_text.get_layout().get_line_readonly(0).get_pixel_extents()[1].height,
+        'Explanatory text does not wrap inside its row');
+    records.codex = JSON.parse(JSON.stringify(original));
+    records.codex.limits.status = 'ready';
+    records.codex.limits.message = '';
     indicator.render();
     for (let iteration = 0; iteration < cycles; iteration++) {
         const id = iteration % 2 ? 'codex' : 'claude';
-        indicator._providers.get(id).item.menu.open(false);
+        indicator._providers.get(id).item.menu.open(animation);
         const state = indicator._providers.get(id);
         state.activity.activate();
         indicator.render();
         state.activity.activate();
         await wait(5);
     }
-    indicator.menu.close(0);
+    indicator.menu.close(animation);
     const states = [...indicator._providers.values()];
     const items = states.map(state => state.item);
     for (let iteration = 0; iteration < 100; iteration++)
         indicator.render();
-    indicator.menu.open(0);
+    indicator.menu.open(animation);
     await wait();
     assert(items.every((item, index) => item === [...indicator._providers.values()][index].item),
         'Closed-popup refreshes rebuild menu actors');

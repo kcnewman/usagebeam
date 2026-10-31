@@ -1,8 +1,9 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import System from 'system';
+import Soup from 'gi://Soup?version=3.0';
 import {createQuotaWindow, createUsageRecord} from '../../src/core/usage.js';
-import {loadProviderSnapshot, saveProviderSnapshot} from '../../src/services/snapshotStore.js';
+import {loadProviderSnapshot, readProviderSnapshot, saveProviderSnapshot} from '../../src/services/snapshotStore.js';
 import {parseClaudeEvent} from '../../src/providers/claude.js';
 import {parseCodexEvent} from '../../src/providers/codex.js';
 import {createCommandSpec, findCommand} from '../../src/services/commands.js';
@@ -58,6 +59,8 @@ snapshot.capabilities.limits = true;
 snapshot.limits = {...snapshot.limits, status: 'ready', updatedAt: now, source: 'Synthetic account limits',
     windows: [createQuotaWindow({id: 'weekly', label: 'Weekly', usedPercent: 25, resetsAt: now + 60000})]};
 assert(saveProviderSnapshot(snapshot, snapshotDirectory), 'snapshot persistence must succeed in a private directory');
+assert(readProviderSnapshot('codex', snapshotDirectory).limits.status === 'ready',
+    'Settings diagnostics must preserve saved status instead of applying the live-cache stale transition');
 const restoredSnapshot = loadProviderSnapshot('codex', snapshotDirectory);
 assert(restoredSnapshot.limits.status === 'stale' && restoredSnapshot.limits.updatedAt === now &&
     restoredSnapshot.limits.windows[0].usedPercent === 25,
@@ -252,6 +255,81 @@ let failed = false;
             limited = error.code === 'OUTPUT_LIMIT';
         }
         assert(limited, 'subprocess output limit');
+        const addTimeout = GLib.timeout_add;
+        const removeSource = GLib.source_remove;
+        const commandSources = new Set();
+        GLib.timeout_add = (priority, delay, callback) => {
+            const id = addTimeout(priority, delay, () => {
+                commandSources.delete(id);
+                return callback();
+            });
+            commandSources.add(id);
+            return id;
+        };
+        GLib.source_remove = id => {
+            commandSources.delete(id);
+            return removeSource(id);
+        };
+        try {
+            const shutdown = new Gio.Cancellable();
+            const operation = runCommand(['/bin/sleep', '5'], {cancellable: shutdown, gracefulCancellation: true});
+            assert(commandSources.size === 1, 'Command deadline was not tracked');
+            shutdown.cancel();
+            assert(commandSources.size === 0, 'Cancellation leaves a Shell main-loop source alive');
+            const error = await operation.catch(error => error);
+            assert(error.code === 'CANCELLED' && commandSources.size === 0,
+                'Cancelled command creates a delayed cleanup source');
+        } finally {
+            GLib.timeout_add = addTimeout;
+            GLib.source_remove = removeSource;
+        }
+        print('PASS: GJS cancellation removes command sources synchronously');
+        const mockBin = buildPath(scratch, 'shutdown-bin');
+        const childPidPath = buildPath(scratch, 'shutdown-child.pid');
+        GLib.mkdir_with_parents(mockBin, 0o700);
+        const mockCodex = buildPath(mockBin, 'codex');
+        GLib.file_set_contents(mockCodex, '#!/usr/bin/gjs -m\n' +
+            'import Gio from "gi://Gio";\nimport GLib from "gi://GLib";\n' +
+            'GLib.file_set_contents(GLib.getenv("USAGEBEAM_MOCK_PID"), String(new Gio.Credentials().get_unix_pid()));\n' +
+            'new GLib.MainLoop(null, false).run();\n');
+        GLib.chmod(mockCodex, 0o700);
+        const collectorCancellation = new Gio.Cancellable();
+        let collectorError = null;
+        const collectorShutdown = runCommand({argv: ['/usr/bin/gjs', '-m',
+            buildPath(GLib.get_current_dir(), 'src', 'collector', 'main.js'), 'codex'], environment: {
+            PATH: `${mockBin}:/usr/bin:/bin`, CODEX_HOME: buildPath(scratch, 'shutdown-history'),
+            XDG_CACHE_HOME: buildPath(scratch, 'shutdown-cache'), USAGEBEAM_MOCK_PID: childPidPath,
+        }}, {cancellable: collectorCancellation, gracefulCancellation: true}).catch(error => {
+            collectorError = error;
+        });
+        try {
+            await new Promise((resolve, reject) => {
+                let attempts = 0;
+                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 20, () => {
+                    if (collectorError) {
+                        reject(new Error(`Collector exited before provider startup: ${collectorError.code}`));
+                        return GLib.SOURCE_REMOVE;
+                    }
+                    if (Gio.File.new_for_path(childPidPath).query_exists(null)) {
+                        resolve();
+                        return GLib.SOURCE_REMOVE;
+                    }
+                    if (++attempts >= 200) {
+                        reject(new Error('Synthetic provider child did not start'));
+                        return GLib.SOURCE_REMOVE;
+                    }
+                    return GLib.SOURCE_CONTINUE;
+                });
+            });
+        } finally {
+            collectorCancellation.cancel();
+            await collectorShutdown;
+        }
+        const [, pidBytes] = GLib.file_get_contents(childPidPath);
+        const childPid = new TextDecoder().decode(pidBytes).trim();
+        assert(/^\d+$/.test(childPid) && !Gio.File.new_for_path(`/proc/${childPid}`).query_exists(null),
+            'Collector shutdown leaves a provider child running or unreaped');
+        print('PASS: GJS collector shutdown reaps its provider child');
         const cancelled = new Gio.Cancellable();
         cancelled.cancel();
         let cancellationReported = false;
@@ -271,6 +349,33 @@ let failed = false;
             insecureEndpoint = error.message.includes('HTTPS');
         }
         assert(insecureEndpoint, 'provider requests must reject insecure endpoints before network access');
+        // Feed synthetic response streams through the HTTP reader without a network request.
+        const send = Soup.Session.prototype.send_async;
+        const finish = Soup.Session.prototype.send_finish;
+        let response = '{"value":"✓"}';
+        let stream;
+        Soup.Session.prototype.send_async = function (_message, _priority, _cancel, callback) {
+            stream = Gio.MemoryInputStream.new_from_bytes(new GLib.Bytes(new TextEncoder().encode(response)));
+            callback(this, null);
+        };
+        Soup.Session.prototype.send_finish = () => stream;
+        try {
+            assert((await requestJson('https://example.invalid')).data.value === '✓', 'HTTP JSON decoding changed');
+            assert(stream.is_closed(), 'Successful HTTP response stream stays open');
+            response = 'x'.repeat(256 * 1024);
+            let oversized = false;
+            try {
+                await requestJson('https://example.invalid', {maxResponseBytes: 4096});
+            } catch (error) {
+                oversized = error.message.includes('exceeded');
+            }
+            assert(oversized && stream.tell() < response.length && stream.is_closed(),
+                'Oversized HTTP response was fully buffered or left open');
+        } finally {
+            Soup.Session.prototype.send_async = send;
+            Soup.Session.prototype.send_finish = finish;
+        }
+        print('PASS: GJS bounded HTTP response reading and cleanup');
         print('PASS: GJS subprocess communication, deadline and termination');
     } catch (error) {
         printerr(error.message);

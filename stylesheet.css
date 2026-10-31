@@ -1,13 +1,17 @@
-/* Match native GNOME menus: geometry only, with fonts and colors from the theme. */
+/* Native theme typography and surfaces; geometry follows the standard menu. */
+/* Menu design inspired by Vitals, CoreCoding and contributors: https://github.com/corecoding/Vitals */
 .usagebeam-panel-status { spacing: 6px; }
 .usagebeam-panel-icon-slot { width: 16px; }
 .usagebeam-provider-icon,
 .usagebeam-panel-icon { icon-size: 16px; -st-icon-style: symbolic; }
 .usagebeam-provider-row .popup-menu-icon { -st-icon-style: symbolic; }
-.usagebeam-provider-value { min-width: 40px; text-align: right; }
-.usagebeam-detail { spacing: 12px; }
-.usagebeam-reset-row { padding-top: 0; }
-.usagebeam-actions { spacing: 22px; }
+.usagebeam-provider-value { text-align: right; }
+.usagebeam-metric { font-feature-settings: "tnum"; text-align: right; }
+.usagebeam-row-heading { spacing: 8px; }
+.usagebeam-model-row:ltr .popup-menu-icon { margin-left: 16px; }
+.usagebeam-model-row:rtl .popup-menu-icon { margin-right: 16px; }
+.usagebeam-actions { spacing: 0; }
+.usagebeam-toast { width: 24em; min-height: 0; }
 .usagebeam-icon-action {
   -st-icon-style: symbolic;
   border-radius: 32px;
@@ -17,3 +21,11 @@
   padding: 10px;
 }
 .usagebeam-icon-action > StIcon { icon-size: 16px; }
+
+/* Panel severity only; popup colors continue to follow GNOME. */
+.usagebeam-panel-value.usagebeam-caution { color: #e8c65d; }
+.usagebeam-panel-value.usagebeam-warning { color: #ee9d50; }
+.usagebeam-panel-value.usagebeam-danger { color: #f05f78; }
+.usagebeam-panel-value.usagebeam-caution.usagebeam-light { color: #7a5b00; }
+.usagebeam-panel-value.usagebeam-warning.usagebeam-light { color: #9a4f00; }
+.usagebeam-panel-value.usagebeam-danger.usagebeam-light { color: #b32638; }

@@ -8,26 +8,27 @@ export function formatTokenCount(value) {
     return String(Math.round(value));
 }
 
-export function formatResetTime(time, now = Date.now()) {
-    if (!Number.isFinite(time) || time <= 0)
-        return 'Reset time unavailable';
-    const minutes = Math.ceil((time - now) / 60000);
-    if (minutes <= 0)
-        return 'Reset due · awaiting update';
-    if (minutes >= 1440)
-        return `Resets in ${Math.floor(minutes / 1440)}d ${Math.floor(minutes % 1440 / 60)}h`;
-    if (minutes >= 60)
-        return `Resets in ${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-    return `Resets in ${minutes}m`;
+export function formatQuotaName(window) {
+    const source = `${window?.id ?? ''} ${window?.label ?? ''}`.toLowerCase();
+    if (source.includes('five-hour') || source.includes('5 hours'))
+        return '5h Session';
+    if (source.includes('reserve') &&
+        (source.includes('weekly') || window?.durationMinutes === 10080))
+        return 'Reserve';
+    return String(window?.label ?? 'Usage limit');
 }
 
 export function formatResetCountdown(time, now = Date.now()) {
-    const value = formatResetTime(time, now);
-    if (value.startsWith('Resets in '))
-        return value.slice('Resets in '.length);
-    if (value.startsWith('Reset due'))
+    if (!Number.isFinite(time) || time <= 0)
+        return null;
+    const minutes = Math.ceil((time - now) / 60000);
+    if (minutes <= 0)
         return 'due';
-    return null;
+    if (minutes >= 1440)
+        return `${Math.floor(minutes / 1440)}d ${Math.floor(minutes % 1440 / 60)}h`;
+    if (minutes >= 60)
+        return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+    return `${minutes}m`;
 }
 
 export function formatUpdateAge(time, now = Date.now()) {

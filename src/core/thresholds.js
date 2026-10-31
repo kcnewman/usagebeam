@@ -4,6 +4,16 @@ const QUOTA_THRESHOLDS = Object.freeze({
     danger: 100,
 });
 
+export function quotaSeverity(percent) {
+    if (!Number.isFinite(percent))
+        return null;
+    for (const [severity, threshold] of Object.entries(QUOTA_THRESHOLDS).reverse()) {
+        if (percent >= threshold)
+            return severity;
+    }
+    return null;
+}
+
 export function notificationMilestones(minimum = QUOTA_THRESHOLDS.warning) {
     const floor = Number.isFinite(minimum)
         ? Math.max(0, Math.min(100, Math.round(minimum)))

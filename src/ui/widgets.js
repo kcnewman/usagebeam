@@ -10,9 +10,14 @@ export function createLabel(text, style = '', expand = false) {
 }
 
 export function createMetricLabel(text, style = '', expand = false) {
-    const actor = createLabel(text, style, expand);
+    const actor = createLabel(text, `usagebeam-metric ${style}`.trim(), expand);
     actor.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+    actor.x_align = Clutter.ActorAlign.END;
     return actor;
+}
+
+export function createSymbolicIcon(name, extensionPath) {
+    return new Gio.FileIcon({file: Gio.File.new_for_path(`${extensionPath}/icons/${name}-symbolic.svg`)});
 }
 
 export function createProviderIcon(provider, extensionPath, style = '') {
