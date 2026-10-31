@@ -15,16 +15,16 @@ jobs:
         with:
           node-version: 22
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y gjs gir1.2-soup-3.0 libglib2.0-dev-bin meson ninja-build python3
+        run: sudo apt-get update && sudo apt-get install -y gjs gir1.2-soup-3.0 libglib2.0-dev-bin python3
       - name: Verify JavaScript, schemas, fixtures, and package
         run: npm run verify
       - name: Stress history, notifications, and subprocess bounds
         run: npm run test:stress
-      - name: Verify isolated install
+      - name: Verify packaged schemas
         run: |
-          meson setup build --prefix="$RUNNER_TEMP/usagebeam-install"
-          meson install -C build
-          test -f "$RUNNER_TEMP/usagebeam-install/share/gnome-shell/extensions/usagebeam@oo7kc.github.io/schemas/gschemas.compiled"
+          unzip dist/*.zip -d "$RUNNER_TEMP/usagebeam-install"
+          test -f "$RUNNER_TEMP/usagebeam-install/schemas/gschemas.compiled"
+          GSETTINGS_SCHEMA_DIR="$RUNNER_TEMP/usagebeam-install/schemas" gsettings list-keys org.gnome.shell.extensions.usagebeam
       - uses: actions/upload-artifact@v7
         with:
           name: usagebeam-extension

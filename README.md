@@ -1,153 +1,92 @@
 # UsageBeam
 
-UsageBeam puts Codex, Claude Code, and OpenCode usage where it is easiest to see: in the
-GNOME top panel. The compact indicator shows the active provider's shortest quota
-and reset countdown; its popup reveals every reported limit plus seven days of
-local token and model activity.
+Your coding usage, one glance away.
 
-OpenCode shows local token activity in the panel and menu. Account quotas remain
-available for Codex and Claude Code.
+UsageBeam brings Codex and Claude Code usage to the GNOME top panel. Check
+account limits and reset times, explore seven days of local activity, and open
+your provider in a terminal—all from a small, native menu.
 
-The product concept was adapted for GNOME Shell from the
-[Agents plugin in Omarchy](https://github.com/omacom/omarchy/blob/quattro/shell/plugins/agents/README.md).
-UsageBeam is an independent implementation designed around GNOME's native panel,
-preferences, accessibility, and lifecycle conventions.
+![UsageBeam's compact provider menu](docs/screenshot.png)
 
-## At a glance
+## Features
 
-- Live account limits and reset windows for Codex and Claude Code.
-- OpenCode local token activity across projects, with daily and model totals.
-- A stable, single-provider panel indicator.
-- Four panel placements: left area, right area, left of calendar, or right of
-  calendar.
-- Seven-day local activity chart and per-model token totals.
-- Independent live, local, cached, syncing, and setup states.
-- System light and dark surfaces compatible with configured popup blur.
-- Private local storage with no prompt, response, transcript, or credential
-  retention.
-
-UsageBeam displays only data reported by a provider or found in local usage
-records. Local activity covers this device; it is not billing data and is never
-converted into an account quota.
-
-## Screenshots
-
-### Panel indicator
-
-![UsageBeam showing the active Codex quota beside the GNOME calendar](docs/images/panel-indicator.png)
-
-### Account limits
-
-![UsageBeam showing Codex account limits and reset times](docs/images/account-limits.png)
-
-### Local activity
-
-![UsageBeam showing a seven-day activity chart and token totals by model](docs/images/local-activity.png)
-
-### Preferences
-
-_Screenshot placeholder — provider, placement, refresh, and notification settings._
-
-## Supported providers
-
-### Codex
-
-UsageBeam reads account quota windows through the installed Codex CLI app-server
-and scans local Codex session records for activity. The CLI must be installed
-and signed in to show live limits. Common user-local, fnm, nvm, mise, asdf, and
-Volta installations are discovered even when GNOME Shell has a restricted
-`PATH`.
-
-### Claude Code
-
-UsageBeam reads supported account limits from Claude Code's saved OAuth sign-in
-and scans local Claude Code project records for activity. Account limits require
-an active sign-in; local activity can remain available independently.
-
-### OpenCode
-
-UsageBeam reads local OpenCode activity without accessing credentials or starting
-the OpenCode CLI. Its panel readout shows tokens over seven days. Account quotas
-and reset times are unavailable for this provider.
-
-See the detailed [Codex](docs/providers/codex.md),
-[Claude Code](docs/providers/claude.md), and [OpenCode](docs/providers/opencode.md) provider notes for source and
-compatibility details.
-
-## Requirements
-
-- GNOME Shell 50.
-- GJS with Gio, GLib, and Soup 3 introspection data.
-- The Codex CLI and/or Claude Code, installed and signed in for account limits.
-- For OpenCode activity: local OpenCode SQLite history and Python 3.11+ with SQLite
-  support. No additional Python packages are needed.
+- Current account usage and reset windows, kept separate from local token totals.
+- Expandable provider rows with model totals and daily activity.
+- GNOME's fonts, colors, keyboard navigation, and light/dark styling.
+- Refresh, provider terminal, and settings shortcuts.
+- Configurable provider order, panel side, refresh interval, and usage alerts.
+- Private local storage, with no telemetry or runtime package dependencies.
 
 ## Install
 
-Download the UsageBeam ZIP from [GitHub Releases](https://github.com/oo7kc/usagebeam/releases),
-then run:
+Requires **GNOME Shell 50** and a signed-in [Codex CLI](https://github.com/openai/codex)
+or [Claude Code](https://code.claude.com/docs/en/setup). A desktop terminal is
+needed for the terminal shortcut; `xdg-terminal-exec` is preferred when installed.
 
-```bash
-gnome-extensions install ./usagebeam@oo7kc.github.io-VERSION.zip
+Download the ZIP from [GitHub Releases](https://github.com/oo7kc/usagebeam/releases/latest),
+then install it:
+
+```sh
+gnome-extensions install --force ./usagebeam@oo7kc.github.io-2.0.0.zip
+```
+
+Log out and back in, then enable UsageBeam:
+
+```sh
 gnome-extensions enable usagebeam@oo7kc.github.io
 ```
 
-Log out and back in when installing UsageBeam for the first time so GNOME Shell
-can discover the new extension identity. When replacing an existing UsageBeam
-installation, add `--force`; it tells `gnome-extensions` that overwriting the
-installed copy is intentional.
+The same installation command upgrades an existing copy. Your settings are retained.
 
-## Settings
+## Use
 
-Open the preferences window from the popup or with:
+Click the panel indicator to open the menu. Expand a provider to see its limits
+and select it for the panel and terminal shortcut. Expand **Activity** to see
+local model totals and daily usage. Closing the menu collapses the details while
+remembering the selected provider.
 
-```bash
-gnome-extensions prefs usagebeam@oo7kc.github.io
-```
+The three buttons at the bottom refresh usage, open the selected provider in a
+terminal, and open settings. Terminal sessions start in your home directory.
 
-Preferences let you enable and order providers, choose the startup provider,
-place the indicator, set refresh and alert behavior, control activity retention,
-and safely clear UsageBeam's saved usage data.
+In settings, choose providers and their order, left or right panel placement,
+refresh frequency, alert thresholds, and activity retention. **Clear saved usage**
+removes UsageBeam's derived data; it does not delete provider history.
 
-Clearing saved usage removes UsageBeam's derived snapshots and caches. It does
-not alter provider history, so available activity rebuilds on the next refresh.
+## How the numbers work
 
-## Privacy and storage
+Codex account limits come from its installed CLI app-server. Claude Code limits
+use its saved OAuth sign-in and account-usage endpoint. Availability depends on
+the account and installed client; API-key accounts may not expose subscription
+limits. Provider interfaces can change independently of UsageBeam.
 
-UsageBeam processes provider data locally and stores only derived usage metadata:
+Local activity comes from session records on this device. It includes input,
+output, and cache tokens using each provider's accounting rules. It is not an
+account-wide quota or a billing estimate. Missing data stays unavailable rather
+than being shown as zero; cached or incomplete data is labelled.
 
-- State: `$XDG_STATE_HOME/usagebeam`
-- Incremental history cache: `$XDG_CACHE_HOME/usagebeam`
+If limits are unavailable, open the provider's CLI, confirm it is signed in, and
+refresh. Local activity may remain available independently. After upgrading the
+extension or installing a CLI, a fresh GNOME login may be needed.
 
-Files are created with private permissions. Credentials are read only when a
-provider requires them and are never copied, cached, or logged. Account and
-session identifiers used for change detection or deduplication are hashed before
-persistence. Prompt and response content is ignored.
+## Privacy
 
-Recognized settings and derived data from older Freeby alpha builds are migrated
-once without overwriting existing UsageBeam data. Credentials are excluded from
-that migration.
-
-## Troubleshooting
-
-- **Limits show Setup:** open the provider's CLI and confirm it is signed in.
-- **Activity is local only:** this is expected; UsageBeam does not merge records
-  from other devices.
-- **Values show Cached:** the last valid values remain visible during a temporary
-  provider or network failure.
-- **The indicator is absent after installation:** log out and back in, then enable
-  the extension again.
-- **Another panel extension changes placement:** UsageBeam follows GNOME's panel
-  boxes, so layout extensions may override the final arrangement.
+UsageBeam stores only derived usage metadata under `$XDG_STATE_HOME/usagebeam`
+and `$XDG_CACHE_HOME/usagebeam`, with private file permissions. It does not store
+credentials, prompts, responses, transcripts, or raw account/session identifiers.
+Codex manages its own authentication; Claude's saved token is read only for its
+usage request and is never copied into UsageBeam's storage.
 
 ## Remove
 
-```bash
+```sh
 gnome-extensions disable usagebeam@oo7kc.github.io
 gnome-extensions uninstall usagebeam@oo7kc.github.io
 ```
 
-For architecture, code conventions, and verification commands, see
-[Development](docs/development.md).
+For source builds and maintenance, see [Development](docs/development.md).
+Report problems in [GitHub Issues](https://github.com/oo7kc/usagebeam/issues).
 
-UsageBeam is licensed under the [MIT License](LICENSE).
+Independent software, unaffiliated with OpenAI or Anthropic. Inspired by the
+[Omarchy Agents plugin](https://github.com/omacom/omarchy) and
+[Vitals' compact GNOME interface](https://github.com/corecoding/Vitals).
+Licensed under [MIT](LICENSE).

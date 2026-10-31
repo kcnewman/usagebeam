@@ -6,10 +6,11 @@ import {loadProviderSnapshot, saveProviderSnapshot} from '../../src/services/sna
 import {parseClaudeEvent} from '../../src/providers/claude.js';
 import {parseCodexEvent} from '../../src/providers/codex.js';
 import {createCommandSpec, findCommand} from '../../src/services/commands.js';
-import {buildPath, clearDerivedData, migrateLegacyData, readJson, writeJson} from '../../src/services/files.js';
+import {buildPath, clearDerivedData, readJson, writeJson} from '../../src/services/files.js';
 import {scanJsonlHistory} from '../../src/services/history.js';
 import {requestJson} from '../../src/services/http.js';
-import {copyLegacySettings, migrateProviderOrder} from '../../src/services/migration.js';
+import {normalizeSettings} from '../../src/services/settings.js';
+import {getProviderTerminalSpec} from '../../src/services/terminalLauncher.js';
 import {runCommand} from '../../src/services/process.js';
 import {RpcClient} from '../../src/services/rpcClient.js';
 import {UsageService} from '../../src/services/usageService.js';
@@ -68,23 +69,6 @@ assert(!saveProviderSnapshot(snapshot, privateRecord),
     'snapshot persistence failures must remain independent from live usage');
 print('PASS: GJS snapshot validation, stale restoration, and persistence failure isolation');
 
-const legacyState = buildPath(scratch, 'legacy-state');
-const legacyCache = buildPath(scratch, 'legacy-cache');
-const migratedState = buildPath(scratch, 'usagebeam-state');
-const migratedCache = buildPath(scratch, 'usagebeam-cache');
-writeJson(buildPath(legacyState, 'codex.json'), {provider: 'codex'});
-writeJson(buildPath(legacyCache, 'history-codex.json'), {version: 4});
-writeJson(buildPath(legacyState, 'unrelated.json'), {private: true});
-assert(migrateLegacyData({legacyState, legacyCache, state: migratedState, cache: migratedCache}) === 2,
-    'legacy migration must copy only recognized derived data');
-assert(readJson(buildPath(migratedState, 'codex.json')).provider === 'codex', 'provider state migration');
-assert(readJson(buildPath(migratedCache, 'history-codex.json')).version === 4, 'history cache migration');
-assert(!Gio.File.new_for_path(buildPath(migratedState, 'unrelated.json')).query_exists(null),
-    'legacy migration must ignore unrelated files');
-assert(migrateLegacyData({legacyState, legacyCache, state: migratedState, cache: migratedCache}) === 0,
-    'legacy migration must not overwrite migrated data');
-print('PASS: GJS legacy derived-data migration');
-
 const clearState = buildPath(scratch, 'clear-state');
 const clearCache = buildPath(scratch, 'clear-cache');
 writeJson(buildPath(clearState, 'codex.json'), {provider: 'codex'});
@@ -103,30 +87,51 @@ assert(Gio.File.new_for_path(buildPath(clearState, 'claude.json')).query_exists(
     'clear data must retain directories and unrelated files');
 print('PASS: GJS safe derived-data clearing');
 
-const currentSettings = new Map([['default-provider', 'claude']]);
-const formerSettings = new Map([['default-provider', 'codex'], ['refresh-interval', 30]]);
-const fakeSettings = values => ({
-    get_user_value: key => values.get(key) ?? null,
-    set_value(key, value) { values.set(key, value); return true; },
-});
-assert(copyLegacySettings(fakeSettings(currentSettings), fakeSettings(formerSettings)) === 1,
-    'settings migration must copy only missing explicit values');
-assert(currentSettings.get('default-provider') === 'claude' && currentSettings.get('refresh-interval') === 30,
-    'settings migration must preserve UsageBeam values');
-print('PASS: GJS legacy settings migration policy');
-
-const providerSettings = new Map([['enabled-providers', {
-    deepUnpack: () => ['claude', 'codex'],
-}]]);
-const orderSettings = {
-    get_user_value: key => providerSettings.get(key) ?? null,
-    set_strv(key, value) { providerSettings.set(key, [...value]); },
+const savedSettings = new Map([
+    ['enabled-providers', ['unknown', 'claude', 'codex']],
+    ['provider-order', ['claude', 'unknown', 'codex']],
+    ['default-provider', 'unknown'], ['panel-position', 'retired-position'],
+]);
+const settings = {
+    get_user_value: key => savedSettings.get(key) ?? null,
+    get_strv: key => savedSettings.get(key),
+    set_strv: (key, value) => savedSettings.set(key, value),
+    get_string: key => savedSettings.get(key),
+    set_string: (key, value) => savedSettings.set(key, value),
 };
-assert(migrateProviderOrder(orderSettings), 'provider order migration must preserve an explicit legacy order');
-assert(JSON.stringify(providerSettings.get('provider-order')) === '["claude","codex","opencode"]',
-    'provider order migration must retain the existing provider sequence');
-assert(!migrateProviderOrder(orderSettings), 'provider order migration must not overwrite an explicit value');
-print('PASS: GJS provider order migration');
+normalizeSettings(settings);
+assert(savedSettings.get('enabled-providers').join(',') === 'claude,codex' &&
+    savedSettings.get('provider-order').join(',') === 'claude,codex', 'Upgrade must retain supported provider order');
+assert(savedSettings.get('default-provider') === 'claude' && savedSettings.get('panel-position') === 'right',
+    'Upgrade must replace unknown provider and panel settings');
+savedSettings.set('enabled-providers', []);
+normalizeSettings(settings);
+assert(savedSettings.get('enabled-providers').length === 0, 'Upgrade must preserve explicitly disabled providers');
+print('PASS: GJS settings upgrade preserves valid choices');
+
+const providerPath = '/synthetic path/with $literal/claude';
+const resolveProvider = name => ({argv: [name === 'claude' ? providerPath : '/fixture/codex'], environment: {PATH: '/fixture/bin'}});
+const terminalSpec = getProviderTerminalSpec('claude', {resolveProvider,
+    resolveTerminal: name => { if (name === 'xdg-terminal-exec') return '/fixture/terminal'; throw new Error('missing'); }});
+assert(JSON.stringify(terminalSpec.argv) === JSON.stringify(['/fixture/terminal', '--', providerPath]),
+    'Terminal commands must preserve paths as literal arguments');
+assert(terminalSpec.environment.PATH === '/fixture/bin', 'Terminal must inherit resolved provider runtime paths');
+const fallbackSpec = getProviderTerminalSpec('codex', {resolveProvider,
+    resolveTerminal: name => { if (name === 'gnome-terminal') return '/fixture/gnome-terminal'; throw new Error('missing'); }});
+assert(JSON.stringify(fallbackSpec.argv) === '["/fixture/gnome-terminal","--window","--","/fixture/codex"]',
+    'Terminal fallback must open the selected provider');
+for (const options of [
+    {resolveProvider: () => { throw new Error('missing'); }},
+    {resolveProvider, resolveTerminal: () => { throw new Error('missing'); }},
+]) {
+    let failed = false;
+    try { getProviderTerminalSpec('codex', options); } catch { failed = true; }
+    assert(failed, 'Missing CLI or terminal must produce an actionable failure');
+}
+let retiredRejected = false;
+try { getProviderTerminalSpec('unknown', {resolveProvider}); } catch { retiredRejected = true; }
+assert(retiredRejected, 'Unknown providers must not launch');
+print('PASS: GJS literal terminal command selection');
 
 let cancelledJob = false;
 let changedRecords = 0;

@@ -29,8 +29,10 @@ const page = buildPreferencesWindow(window, settings, () => 0);
 let widgets = descendants(page);
 assert(widgets.filter(widget => widget instanceof Adw.PreferencesGroup).length === 3,
     'Preferences must retain three focused groups');
-assert(widgets.filter(widget => widget instanceof Adw.SwitchRow).length === 4,
-    'Preferences must expose three providers and notification control');
+assert(widgets.filter(widget => widget instanceof Adw.SwitchRow).length === 3,
+    'Preferences must expose two providers and notification control');
+const position = widgets.find(widget => widget instanceof Adw.ComboRow && widget.title === 'Panel position');
+assert(position.model.get_n_items() === 2, 'Preferences must expose left and right panel areas only');
 assert(widgets.filter(widget => widget instanceof Adw.SpinRow).length === 3,
     'Preferences must expose refresh, warning and retention controls');
 
@@ -39,8 +41,8 @@ settings.set_strv('enabled-providers', ['claude']);
 while (GLib.MainContext.default().iteration(false));
 widgets = descendants(page);
 const providers = widgets.filter(widget => widget instanceof Adw.SwitchRow &&
-    ['Claude Code', 'Codex', 'OpenCode'].includes(widget.title));
-assert(providers.map(row => row.title).join(',') === 'Claude Code,Codex,OpenCode',
+    ['Claude Code', 'Codex'].includes(widget.title));
+assert(providers.map(row => row.title).join(',') === 'Claude Code,Codex',
     'Provider rows must follow the configured order');
 const defaultRow = widgets.find(widget => widget instanceof Adw.ComboRow &&
     widget.title === 'Default provider');

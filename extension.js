@@ -2,16 +2,18 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {formatNotificationBody} from './src/core/notifications.js';
 import {UsageBeamIndicator} from './src/ui/indicator.js';
-import {clearIndicatorPlacement, placeIndicator} from './src/ui/panelPlacement.js';
-import {migrateLegacyInstall} from './src/services/migration.js';
+import {placeIndicator} from './src/ui/panelPlacement.js';
+import {normalizeSettings} from './src/services/settings.js';
 import {UsageService} from './src/services/usageService.js';
+import {launchProviderTerminal} from './src/services/terminalLauncher.js';
 
 export default class UsageBeamExtension extends Extension {
     enable() {
         this._settings = this.getSettings('org.gnome.shell.extensions.usagebeam');
-        migrateLegacyInstall(this._settings);
-        this._indicator = new UsageBeamIndicator(this._settings, this.path, () => this.openPreferences());
-        Main.panel.addToStatusArea(this.uuid, this._indicator, 0, 'center');
+        normalizeSettings(this._settings);
+        this._indicator = new UsageBeamIndicator(this._settings, this.path, () => this.openPreferences(),
+            id => launchProviderTerminal(id));
+        Main.panel.addToStatusArea(this.uuid, this._indicator, 0, 'right');
         this._placeIndicator();
         this._service = new UsageService({
             settings: this._settings,
@@ -51,7 +53,6 @@ export default class UsageBeamExtension extends Extension {
         this._settingsIds = null;
         this._service?.destroy();
         this._service = null;
-        clearIndicatorPlacement(this._indicator);
         this._indicator?.destroy();
         this._indicator = null;
         this._settings = null;

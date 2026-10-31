@@ -1,8 +1,7 @@
 // Provider identity is shared by collectors, preferences, and Shell widgets.
 export const PROVIDERS = Object.freeze({
     codex: Object.freeze({name: 'Codex', label: 'Codex', mark: '>_', icon: 'codex-symbolic.svg'}),
-    claude: Object.freeze({name: 'Claude Code', label: 'Claude', mark: '✦', icon: 'claude.svg'}),
-    opencode: Object.freeze({name: 'OpenCode', label: 'OpenCode', mark: 'AI', icon: 'opencode-symbolic.svg'}),
+    claude: Object.freeze({name: 'Claude Code', label: 'Claude', mark: '✦', icon: 'claude-symbolic.svg'}),
 });
 export const PROVIDER_NAMES = Object.freeze(Object.fromEntries(
     Object.entries(PROVIDERS).map(([id, provider]) => [id, provider.name])));

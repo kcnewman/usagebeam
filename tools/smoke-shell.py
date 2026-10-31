@@ -8,6 +8,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import zipfile
@@ -41,15 +42,12 @@ def install(source, archive, prefix, destination):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(payload.read(entry))
         return
-    build = destination / "build"
-    subprocess.run(
-        ["meson", "setup", str(build), str(source), f"--prefix={prefix}"],
-        check=True,
-        stdout=subprocess.DEVNULL,
-    )
-    subprocess.run(
-        ["meson", "install", "-C", str(build)], check=True, stdout=subprocess.DEVNULL
-    )
+    built_archive = Path(subprocess.check_output(
+        [sys.executable, "-B", str(source / "tools/package.py"),
+         "--source", str(source), "--output", str(destination / "build")],
+        text=True,
+    ).strip())
+    install(source, built_archive, prefix, destination)
 
 
 def seed_usage(destination):
@@ -165,16 +163,7 @@ def seed_usage(destination):
     records = {
         "codex": record("codex", "Codex", "Plus", (100, 94, 83), models),
         "claude": record("claude", "Claude Code", "Pro", (46, 7, 0), models),
-        "opencode": record("opencode", "OpenCode", None, (0, 0, 0), models),
     }
-    records["opencode"]["accountKey"] = None
-    records["opencode"]["capabilities"]["limits"] = False
-    records["opencode"]["limits"].update(
-        status="unsupported",
-        windows=[],
-        updatedAt=None,
-        message="OpenCode account limits are unavailable.",
-    )
     for provider, data in records.items():
         (target / f"{provider}.json").write_text(json.dumps(data))
     # Separate fixtures survive asynchronous collector updates to the cache.
@@ -297,13 +286,13 @@ def smoke(
             "set",
             SCHEMA,
             "enabled-providers",
-            "['codex', 'claude', 'opencode']",
+            "['codex', 'claude']",
         ],
         env,
         check=True,
     )
     run(
-        ["gsettings", "set", SCHEMA, "panel-position", "'left-of-calendar'"],
+        ["gsettings", "set", SCHEMA, "panel-position", "'right'"],
         env,
         check=True,
     )
@@ -495,7 +484,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--archive",
         type=Path,
-        help="Test an already-built release archive instead of a Meson install",
+        help="Test an already-built release archive instead of building one",
     )
     parser.add_argument("--output", type=Path)
     parser.add_argument(
