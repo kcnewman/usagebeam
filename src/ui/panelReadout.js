@@ -2,6 +2,8 @@ import Atk from 'gi://Atk';
 import Clutter from 'gi://Clutter';
 import GObject from 'gi://GObject';
 import St from 'gi://St';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import {quotaSeverity} from '../core/thresholds.js';
 import {PROVIDER_IDS, PROVIDERS} from '../core/providerRegistry.js';
 import {getPanelQuota, getProviderStatus} from './presentation.js';
 import {createLabel, createMetricLabel, createProviderIcon} from './widgets.js';
@@ -42,6 +44,9 @@ export const UsageBeamPanelReadout = GObject.registerClass(class UsageBeamPanelR
         }
         const quota = getPanelQuota(record);
         this.valueLabel.text = quota ? `${quota.percent}%` : '—';
+        const severity = quotaSeverity(quota?.percent);
+        const variant = Main.getStyleVariant();
+        this.valueLabel.style_class = `usagebeam-metric usagebeam-panel-value${severity ? ` usagebeam-${severity}` : ''} usagebeam-${variant}`;
         const resetDescription = quota?.reset === 'due' ? ', reset due' :
             quota?.reset ? `, resets in ${quota.reset}` : '';
         const status = getProviderStatus(record, refreshing).toLowerCase();

@@ -1,15 +1,16 @@
 import Clutter from 'gi://Clutter';
 import GObject from 'gi://GObject';
+import Pango from 'gi://Pango';
 import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import {formatModelName, formatTokenCount, formatUpdateAge} from '../core/format.js';
+import {formatModelName, formatTokenCount} from '../core/format.js';
 import {PROVIDERS} from '../core/providerRegistry.js';
 import {UsageBeamPanelReadout} from './panelReadout.js';
-import {createDetailRow, createIconAction, UsageBeamActivityItem} from './menuWidgets.js';
-import {getHistoryOverview, getLatestUpdate, getPanelQuota, getProviderStatus, getQuotaPresentation} from './presentation.js';
-import {createMetricLabel, createProviderIcon} from './widgets.js';
+import {createDetailRow, createIconAction, createResetMetric, createRowHeading, UsageBeamActivityItem} from './menuWidgets.js';
+import {getHistoryOverview, getPanelQuota, getProviderStatus, getQuotaPresentation} from './presentation.js';
+import {createMetricLabel, createProviderIcon, createSymbolicIcon} from './widgets.js';
 
 export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator extends PanelMenu.Button {
     _init(settings, extensionPath, openPreferences, launchProvider) {
@@ -24,14 +25,14 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
         this.add_child(this._panelReadout);
         this.menu.actor.add_style_class_name('usagebeam-menu');
         Main.layoutManager.connectObject('monitors-changed', () => this.resize(), this);
-        St.ThemeContext.get_for_stage(global.stage).connectObject('changed', () => this.resize(), this);
+        St.ThemeContext.get_for_stage(global.stage).connectObject('changed', () => this.render(), this);
         this.menu.connect('open-state-changed', (_menu, open) => {
             if (open) {
                 this.render();
                 this._service?.refreshAll();
             } else {
                 for (const state of this._providers.values()) {
-                    state.item.menu.close(false);
+                    state.item.menu.close();
                     this._setActivityExpanded(state, false);
                 }
             }
@@ -44,6 +45,8 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
     }
 
     render() {
+        if (this._disposed)
+            return;
         const enabled = this._service?.enabledProviders ?? [];
         const requested = this._settings.get_string('default-provider');
         this._selectedProvider = enabled.includes(requested) ? requested : enabled[0];
@@ -59,12 +62,16 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
             const busy = this._service.isRefreshing(id);
             const quota = getPanelQuota(current);
             state.value.text = quota ? `${quota.percent}%` : getProviderStatus(current, busy);
-            state.item.accessible_name = `${PROVIDERS[id].name}, ${state.value.text}`;
-            const key = JSON.stringify([current, busy]);
+            state.reset.setCountdown(quota?.reset);
+            state.reset.visible = Boolean(quota);
+            state.item.accessible_name = `${PROVIDERS[id].name}, ${state.value.text}${quota ? `, reset ${state.reset.label.text}` : ''}`;
+            const key = JSON.stringify(current);
             if (state.recordKey !== key) {
-                this._renderDetails(state, current, busy);
+                this._renderDetails(state, current);
                 state.recordKey = key;
             }
+            for (const row of state.quotas)
+                row.setReset(getQuotaPresentation(row.quotaWindow).reset);
         }
         const refreshing = enabled.some(id => this._service.isRefreshing(id));
         this._refreshButton.reactive = !refreshing;
@@ -96,13 +103,25 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
         for (const id of enabled) {
             const item = new PopupMenu.PopupSubMenuMenuItem(PROVIDERS[id].name, true);
             item.add_style_class_name('usagebeam-provider-row');
+            item.label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
             const icon = createProviderIcon(id, this._extensionPath);
             item.icon.gicon = icon.gicon;
             icon.destroy();
-            const value = createMetricLabel('—', 'usagebeam-provider-value');
+            const reset = createResetMetric(null);
+            reset.hide();
+            const expander = item.get_children().find(child => child.has_style_class_name('popup-menu-item-expander'));
+            expander.destroy();
+            item.remove_child(item.label);
+            item.insert_child_below(createRowHeading(item.label, reset), item.get_last_child());
+            const value = createMetricLabel('—', 'usagebeam-provider-value usagebeam-value');
             item.insert_child_below(value, item.get_last_child());
             this.menu.addMenuItem(item);
-            const state = {id, item, value, activityExpanded: false};
+            item.menu.box.add_style_class_name('usagebeam-provider-details');
+            item.menu.actor.connect('notify::mapped', () => {
+                if (item.menu.actor.mapped)
+                    this.resize();
+            });
+            const state = {id, item, reset, value, activityExpanded: false};
             this._providers.set(id, state);
             item.menu.connect('open-state-changed', (_menu, open) => {
                 if (open) {
@@ -118,25 +137,30 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
             this.menu.addMenuItem(createDetailRow('Enable a provider in Settings.'));
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         const footer = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        footer.add_style_class_name('usagebeam-footer');
         const actions = new St.BoxLayout({style_class: 'usagebeam-actions', x_expand: true,
-            x_align: Clutter.ActorAlign.CENTER});
+            layout_manager: new Clutter.BoxLayout({homogeneous: true})});
         this._refreshButton = createIconAction('view-refresh-symbolic', 'Refresh usage',
             () => this._service?.refreshAll(true));
         this._terminalButton = createIconAction('utilities-terminal-symbolic', 'Open provider in terminal',
             () => this._openTerminal());
-        actions.add_child(this._refreshButton);
-        actions.add_child(this._terminalButton);
-        actions.add_child(createIconAction('preferences-system-symbolic', 'Open UsageBeam settings', () => {
+        const preferences = createIconAction('preferences-system-symbolic', 'Open UsageBeam settings', () => {
             this.menu.close();
             this._openPreferences();
-        }));
+        });
+        for (const button of [this._refreshButton, this._terminalButton, preferences]) {
+            const slot = new St.Bin({x_expand: true});
+            button.x_align = Clutter.ActorAlign.CENTER;
+            slot.set_child(button);
+            actions.add_child(slot);
+        }
         footer.add_child(actions);
         this.menu.addMenuItem(footer);
         if (hadFocus)
             this.menu.firstMenuItem?.grab_key_focus();
     }
 
-    _renderDetails(state, record, busy) {
+    _renderDetails(state, record) {
         const focus = global.stage.get_key_focus();
         const focusName = focus && state.item.menu.box.contains(focus) ? focus.accessible_name : null;
         const menu = state.item.menu;
@@ -146,54 +170,53 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
             state.item.grab_key_focus();
         menu.removeAll();
         state.activity = state.details = null;
+        state.quotas = [];
         if (record) {
             for (const window of record.limits.windows) {
                 const view = getQuotaPresentation(window);
                 if (!view)
                     continue;
-                menu.addMenuItem(createDetailRow(view.name, view.value, {style: 'usagebeam-limit-row'}));
-                if (view.reset)
-                    menu.addMenuItem(createDetailRow(view.reset, '', {secondary: true, style: 'usagebeam-reset-row'}));
+                const row = createDetailRow(view.name, view.value, {
+                    style: 'usagebeam-limit-row', reset: view.reset,
+                    icon: createSymbolicIcon(window.durationMinutes === 300 ? 'session' : 'weekly', this._extensionPath),
+                });
+                row.quotaWindow = window;
+                state.quotas.push(row);
+                menu.addMenuItem(row);
             }
             if (record.limits.status !== 'ready')
                 this._addMessage(menu, record.limits.message || 'Account limits unavailable.');
             const overview = getHistoryOverview(record.history);
             if (overview) {
-                const label = `Activity · ${overview.days ?? 7}d ${overview.scope === 'local' ? 'local' : 'account'}`;
+                const label = 'Activity (7d)';
                 state.activity = new UsageBeamActivityItem(label, formatTokenCount(overview.total),
+                    createSymbolicIcon('activity', this._extensionPath),
                     expanded => { this._setActivityExpanded(state, expanded); this.resize(); });
                 menu.addMenuItem(state.activity);
                 state.details = new PopupMenu.PopupMenuSection();
+                state.details.box.add_style_class_name('usagebeam-model-details');
                 menu.addMenuItem(state.details);
+                if (record.history.message)
+                    state.activity.accessible_name += `. ${record.history.message}`;
                 for (const model of record.history.models) {
                     const name = formatModelName(model.model);
                     state.details.addMenuItem(createDetailRow(name, formatTokenCount(model.total), {
                         style: 'usagebeam-model-row',
+                        icon: createSymbolicIcon('model', this._extensionPath),
                         description: `${name}, ${model.total} tokens. Input ${model.input}, output ${model.output}, cache read ${model.cacheRead}, cache write ${model.cacheWrite}.`,
                     }));
-                }
-                if (record.history.days.length) {
-                    state.details.addMenuItem(createDetailRow('Daily activity', '', {secondary: true}));
-                    for (const day of record.history.days) {
-                        const date = new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
-                        state.details.addMenuItem(createDetailRow(date, formatTokenCount(day.total), {
-                            style: 'usagebeam-day-row', description: `${day.date}, ${day.total} ${overview.scope} tokens`,
-                        }));
-                    }
                 }
                 this._setActivityExpanded(state, state.activityExpanded);
             } else {
                 state.activity = state.details = null;
                 state.activityExpanded = false;
             }
-            if (record.history.message && record.history.status !== 'ready')
-                this._addMessage(menu, record.history.message);
+            if (!overview && record.history.status !== 'ready')
+                menu.addMenuItem(createDetailRow('Activity unavailable', '', {secondary: true,
+                    description: record.history.message || 'No local activity is available yet.'}));
         } else {
             this._addMessage(menu, 'Checking usage…');
         }
-        const status = getProviderStatus(record, busy);
-        menu.addMenuItem(createDetailRow(`${status}${record?.plan ? ` · ${record.plan}` : ''} · ${formatUpdateAge(getLatestUpdate(record))}`,
-            '', {secondary: true, style: 'usagebeam-freshness'}));
         if (focusName) {
             const find = actor => actor.accessible_name === focusName ? actor :
                 actor.get_children().map(find).find(Boolean);
@@ -203,7 +226,10 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
 
     _addMessage(menu, text) {
         const row = createDetailRow(text, '', {secondary: true, style: 'usagebeam-message'});
+        row.label.x_expand = true;
+        row.label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         row.label.clutter_text.line_wrap = true;
+        row.label.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
         menu.addMenuItem(row);
     }
 
@@ -220,7 +246,21 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
         const monitor = Main.layoutManager.findMonitorForActor(this) ?? Main.layoutManager.primaryMonitor;
         const work = Main.layoutManager.getWorkAreaForMonitor(monitor.index);
         const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
-        const width = Math.min(300, Math.max(160, work.width / scale - 48));
+        const states = [...this._providers.values()];
+        const quotas = states.flatMap(state => state.quotas ?? []);
+        for (const row of quotas)
+            row.label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        const contentWidth = Math.max(0, ...states.flatMap(state =>
+            [state.item, state.activity, ...(state.quotas ?? [])]).filter(Boolean).map(row => row.get_preferred_width(-1)[1]));
+        const summaryWidth = Math.max(0, ...states.flatMap(state => [state.item, state.activity])
+            .filter(Boolean).map(row => row.get_preferred_width(-1)[1]));
+        const desiredWidth = Math.max(240, contentWidth / scale + 12);
+        const width = Math.min(desiredWidth, Math.max(320, summaryWidth / scale + 32),
+            Math.max(160, work.width / scale - 48));
+        if (desiredWidth > width) {
+            for (const row of quotas)
+                row.label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        }
         this.menu.box.style = `width: ${width}px;`;
         this.menu.actor.style = `max-height: ${Math.floor(work.height / scale - 16)}px;`;
         const submenus = [...this._providers.values()].map(state => state.item.menu.actor);

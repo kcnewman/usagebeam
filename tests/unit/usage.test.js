@@ -5,7 +5,6 @@ import {getRecentDates, normalizeTimestamp} from '../../src/core/dates.js';
 import {
     formatModelName,
     formatResetCountdown,
-    formatResetTime,
     formatTokenCount,
 } from '../../src/core/format.js';
 import {QuotaThresholdTracker, formatNotificationBody} from '../../src/core/notifications.js';
@@ -164,8 +163,15 @@ test('simultaneous and repeated alerts produce one concise notification body', (
         {provider: 'Codex', label: 'Weekly', threshold: 90},
         {provider: 'Codex', label: 'Weekly', threshold: 90},
         {provider: 'Codex', label: '5H Session', threshold: 100},
-    ]), 'Codex: Weekly reached 90%.\nCodex: 5H Session limit reached.');
+    ]), 'Weekly 90%\n5H Session 100%');
+    assert.equal(formatNotificationBody([
+        {provider: 'Codex', label: 'Weekly', threshold: 90},
+        {provider: 'Claude Code', label: 'Weekly', threshold: 100},
+    ]), 'Codex: Weekly 90%\nClaude Code: Weekly 100%');
     assert.equal(formatNotificationBody([]), '');
+    assert.equal(formatNotificationBody(Array.from({length: 8}, (_, index) =>
+        ({provider: 'Codex', label: `Limit ${index}`, threshold: 90}))),
+    'Limit 0 90%\nLimit 1 90%\nLimit 2 90%\n+5 limits');
 });
 
 test('notification eviction retains recently refreshed windows and accepts fresh partial data', () => {
@@ -188,8 +194,7 @@ test('formatting preserves unknown/reset-due states', () => {
     assert.equal(formatTokenCount(999999999), '1000.0M');
     assert.equal(formatTokenCount(1200000000000), '1.2T');
     assert.equal(formatTokenCount(Number.MAX_SAFE_INTEGER), '9.0P');
-    assert.equal(formatResetTime(null), 'Reset time unavailable');
-    assert.match(formatResetTime(100, 200), /awaiting update/);
+    assert.equal(formatResetCountdown(null), null);
     assert.equal(formatResetCountdown(null), null);
     assert.equal(formatResetCountdown(100, 200), 'due');
     assert.equal(formatResetCountdown(100 + 4 * 86400000 + 22 * 3600000, 100), '4d 22h');

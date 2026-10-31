@@ -4,9 +4,10 @@ import {readStreamText, waitForProcess, writeStreamText} from './streams.js';
 import {DEFAULT_MAX_OUTPUT_BYTES, MAX_OUTPUT_BYTES, MAX_TIMEOUT_MS, ProcessError, spawnSubprocess} from './subprocess.js';
 
 export async function runCommand(spec, {input = null, timeout = 15000, cancellable = null,
-    maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES} = {}) {
+    maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES, gracefulCancellation = false} = {}) {
     if (!Number.isSafeInteger(timeout) || timeout <= 0 || timeout > MAX_TIMEOUT_MS ||
-        !Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0 || maxOutputBytes > MAX_OUTPUT_BYTES)
+        !Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0 || maxOutputBytes > MAX_OUTPUT_BYTES ||
+        typeof gracefulCancellation !== 'boolean')
         throw new ProcessError('INVALID_OPTIONS', 'Process limits are outside the supported range');
     if (input !== null && typeof input !== 'string')
         throw new ProcessError('INVALID_OPTIONS', 'Process input must be text or null');
@@ -16,20 +17,36 @@ export async function runCommand(spec, {input = null, timeout = 15000, cancellab
     const local = new Gio.Cancellable();
     let completed = false;
     let cancellation = null;
-    const externalId = cancellable?.connect(() => {
+    let timer = 0;
+    let killTimer = 0;
+    const clearTimers = () => {
+        if (timer)
+            GLib.source_remove(timer);
+        if (killTimer)
+            GLib.source_remove(killTimer);
+        timer = killTimer = 0;
+    };
+    const cancel = () => {
         cancellation = 'CANCELLED';
+        clearTimers();
         local.cancel();
-    });
-    if (cancellable?.is_cancelled()) {
-        cancellation = 'CANCELLED';
-        local.cancel();
-    }
-    let timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, timeout, () => {
-        timer = 0;
-        cancellation = 'TIMED_OUT';
-        local.cancel();
-        return GLib.SOURCE_REMOVE;
-    });
+        if (!completed) {
+            if (gracefulCancellation)
+                process.send_signal(15);
+            else
+                process.force_exit();
+        }
+    };
+    const externalId = cancellable?.connect(cancel);
+    if (cancellable?.is_cancelled() && !local.is_cancelled())
+        cancel();
+    if (!local.is_cancelled())
+        timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, timeout, () => {
+            timer = 0;
+            cancellation = 'TIMED_OUT';
+            local.cancel();
+            return GLib.SOURCE_REMOVE;
+        });
     try {
         const writeInput = async () => {
             if (input === null)
@@ -54,34 +71,25 @@ export async function runCommand(spec, {input = null, timeout = 15000, cancellab
             throw new ProcessError('CANCELLED', 'Command was cancelled');
         throw error;
     } finally {
-        if (timer)
-            GLib.source_remove(timer);
-        if (externalId)
-            cancellable.disconnect(externalId);
+        clearTimers();
         // Abort remaining stream operations on every failure, including output overflow.
         local.cancel();
         // Give managed collectors time to cancel and reap their own CLI child.
-        if (!completed) {
-            try {
+        try {
+            if (!completed && cancellation !== 'CANCELLED') {
                 process.send_signal(15);
-            } catch {
-                /* The child exited between callbacks. */
-            }
-            let killTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-                killTimer = 0;
-                process.force_exit();
-                return GLib.SOURCE_REMOVE;
-            });
-            let reaped = false;
-            try {
-                await waitForProcess(process);
-                reaped = true;
-            } finally {
-                if (killTimer)
-                    GLib.source_remove(killTimer);
-                if (!reaped)
+                killTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+                    killTimer = 0;
                     process.force_exit();
+                    return GLib.SOURCE_REMOVE;
+                });
             }
+            if (!completed)
+                await waitForProcess(process);
+        } finally {
+            clearTimers();
+            if (externalId)
+                cancellable.disconnect(externalId);
         }
     }
 }

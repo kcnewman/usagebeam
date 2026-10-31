@@ -1,7 +1,7 @@
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import {formatNotificationBody} from './src/core/notifications.js';
 import {UsageBeamIndicator} from './src/ui/indicator.js';
+import {UsageNotifications} from './src/ui/usageNotifications.js';
 import {placeIndicator} from './src/ui/panelPlacement.js';
 import {normalizeSettings} from './src/services/settings.js';
 import {UsageService} from './src/services/usageService.js';
@@ -9,21 +9,18 @@ import {launchProviderTerminal} from './src/services/terminalLauncher.js';
 
 export default class UsageBeamExtension extends Extension {
     enable() {
-        this._settings = this.getSettings('org.gnome.shell.extensions.usagebeam');
+        this._settings = this.getSettings();
         normalizeSettings(this._settings);
         this._indicator = new UsageBeamIndicator(this._settings, this.path, () => this.openPreferences(),
             id => launchProviderTerminal(id));
         Main.panel.addToStatusArea(this.uuid, this._indicator, 0, 'right');
         this._placeIndicator();
+        this._notifications = new UsageNotifications();
         this._service = new UsageService({
             settings: this._settings,
             extensionPath: this.path,
             onChanged: () => this._indicator?.render(),
-            onAlerts: alerts => {
-                const message = formatNotificationBody(alerts);
-                if (message)
-                    Main.notify('UsageBeam usage alert', message);
-            },
+            onAlerts: alerts => this._notifications?.show(alerts),
         });
         this._indicator.attach(this._service);
         this._settingsIds = [];
@@ -53,6 +50,8 @@ export default class UsageBeamExtension extends Extension {
         this._settingsIds = null;
         this._service?.destroy();
         this._service = null;
+        this._notifications?.destroy();
+        this._notifications = null;
         this._indicator?.destroy();
         this._indicator = null;
         this._settings = null;

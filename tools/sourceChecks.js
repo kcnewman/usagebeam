@@ -48,6 +48,23 @@ function checkDependencyCycles(graph) {
         visit(file, []);
 }
 
+function checkProcessImports(entry, forbidden) {
+    const visited = new Set();
+    const visit = file => {
+        if (visited.has(file))
+            return;
+        visited.add(file);
+        const source = readFileSync(file, 'utf8');
+        for (const [, target] of source.matchAll(/^import\s+[\s\S]*?\s+from\s+['"]([^'"]+)['"]/gm)) {
+            if (forbidden.some(name => target === `gi://${name}` || target.startsWith(`gi://${name}?`)))
+                throw new Error(`${entry}: forbidden process import ${target} through ${file}`);
+            if (target.startsWith('.'))
+                visit(resolve(dirname(file), target));
+        }
+    };
+    visit(entry);
+}
+
 export function checkJavaScript(files) {
     const graph = new Map();
     for (const file of files) {
@@ -76,6 +93,8 @@ export function checkJavaScript(files) {
             graph.set(file, imports);
     }
     checkDependencyCycles(graph);
+    checkProcessImports('extension.js', ['Gtk', 'Gdk', 'Adw']);
+    checkProcessImports('prefs.js', ['Clutter', 'Meta', 'St', 'Shell']);
 }
 
 export function checkPython(files) {

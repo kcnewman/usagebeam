@@ -127,7 +127,9 @@ export class UsageService {
         try {
             const collector = createCommandSpec('gjs', ['-m', buildPath(this._extensionPath, 'src', 'collector', 'main.js'),
                 id, String(this._settings.get_int('history-retention-days'))]);
-            const stdout = await runCommand(collector, {cancellable: job, timeout: 45000});
+            // The owned GJS collector handles SIGTERM and reaps its CLI child.
+            // Cancellation removes Shell timers synchronously; reaping is native async I/O.
+            const stdout = await runCommand(collector, {cancellable: job, timeout: 45000, gracefulCancellation: true});
             if (this._destroyed || job.is_cancelled() || this._pendingCollections.get(id) !== job)
                 return;
             const result = validateUsageRecord(JSON.parse(stdout), id);

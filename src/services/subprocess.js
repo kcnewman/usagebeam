@@ -29,7 +29,11 @@ function normalizeCommandSpec(spec) {
 export function spawnSubprocess(spec, flags) {
     const {argv, environment} = normalizeCommandSpec(spec);
     const launcher = new Gio.SubprocessLauncher({flags});
-    for (const [name, value] of Object.entries(environment))
-        launcher.setenv(name, value, true);
-    return launcher.spawnv(argv);
+    try {
+        for (const [name, value] of Object.entries(environment))
+            launcher.setenv(name, value, true);
+        return launcher.spawnv(argv);
+    } finally {
+        launcher.close();
+    }
 }

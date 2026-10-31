@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {notificationMilestones} from '../../src/core/thresholds.js';
+import {formatQuotaName} from '../../src/core/format.js';
+import {notificationMilestones, quotaSeverity} from '../../src/core/thresholds.js';
 import {
     getHistoryOverview,
     getPanelQuota,
     getProviderStatus,
-    getQuotaName,
     getQuotaPresentation,
 } from '../../src/ui/presentation.js';
 
@@ -42,23 +42,26 @@ test('quota presentation keeps names concise and reset descriptions explicit', (
     const now = 1_000_000;
     const reserve = {id: 'gpt-reserve:primary', label: 'Reserve · Weekly',
         durationMinutes: 10080, usedPercent: 18.2, resetsAt: now + 4 * 86400000 + 22 * 3600000};
-    assert.equal(getQuotaName(reserve), 'Weekly Reserve');
+    assert.equal(formatQuotaName(reserve), 'Reserve');
     assert.deepEqual(getQuotaPresentation(reserve, now), {
-        name: 'Weekly Reserve', value: '18%', reset: 'Resets in 4d 22h',
+        name: 'Reserve', value: '18%', reset: '4d 22h',
     });
-    assert.equal(getQuotaName({id: 'five-hour', label: 'Session · 5 hours', durationMinutes: 300}),
-        '5H Session');
+    assert.equal(formatQuotaName({id: 'five-hour', label: 'Session · 5 hours', durationMinutes: 300}),
+        '5h Session');
     assert.deepEqual(getQuotaPresentation({id: 'credits', label: 'Credits', unlimited: true}, now), {
         name: 'Credits', value: 'Unlimited', reset: null,
     });
     assert.equal(getQuotaPresentation({id: 'broken', label: 'Broken'}, now), null);
     assert.equal(getQuotaPresentation({...reserve, resetsAt: now - 1}, now).reset,
-        'Reset due · awaiting update');
+        'due');
     assert.equal(getQuotaPresentation({...reserve, resetsAt: null}, now).reset,
-        'Reset time unavailable');
+        'Unknown');
 });
 
 test('notification milestones follow quota semantics without duplicate levels', () => {
+    for (const [value, severity] of [[null, null], [0, null], [79, null], [80, 'caution'],
+        [89, 'caution'], [90, 'warning'], [99, 'warning'], [100, 'danger']])
+        assert.equal(quotaSeverity(value), severity);
     assert.deepEqual(notificationMilestones(80), [80, 90, 100]);
     assert.deepEqual(notificationMilestones(90), [90, 100]);
     assert.deepEqual(notificationMilestones(95), [95, 100]);

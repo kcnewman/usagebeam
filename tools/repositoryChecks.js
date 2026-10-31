@@ -10,8 +10,14 @@ export function checkRepository() {
         throw new Error('UsageBeam product identity is inconsistent');
     if (!/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(JSON.parse(readFileSync('package.json', 'utf8')).version))
         throw new Error('Invalid release version');
-    if (/font-(?:family|size|weight)\s*:|(?:^|[;{\s])(?:color|background-color)\s*:/m.test(readFileSync('stylesheet.css', 'utf8')))
-        throw new Error('Fonts and colors must come from the GNOME theme');
+    const css = readFileSync('stylesheet.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    if (/font-(?:family|size)\s*:/.test(css))
+        throw new Error('Fonts must come from the GNOME theme');
+    for (const [, selector, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        if (/(?:^|[;\s])(?:color|background-color)\s*:/.test(body) &&
+            !/^\.usagebeam-panel-value\.usagebeam-(?:caution|warning|danger)(?:\.usagebeam-light)?$/.test(selector.trim()))
+            throw new Error('Only panel severity may override native colors');
+    }
     for (const file of ['README.md', 'CHANGELOG.md', 'docs/development.md']) {
         if (!existsSync(file))
             throw new Error(`Missing documentation: ${file}`);

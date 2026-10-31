@@ -1,4 +1,4 @@
-import {formatResetCountdown, formatResetTime} from '../core/format.js';
+import {formatQuotaName, formatResetCountdown} from '../core/format.js';
 
 const CURRENT_STATES = new Set(['ready', 'partial']);
 
@@ -42,27 +42,17 @@ export function getHistoryOverview(history) {
     };
 }
 
-export function getQuotaName(window) {
-    const source = `${window?.id ?? ''} ${window?.label ?? ''}`.toLowerCase();
-    if (source.includes('five-hour') || source.includes('5 hours'))
-        return '5H Session';
-    if (source.includes('reserve') &&
-        (source.includes('weekly') || window?.durationMinutes === 10080))
-        return 'Weekly Reserve';
-    return String(window?.label ?? 'Usage limit');
-}
-
 export function getQuotaPresentation(window, now = Date.now()) {
     if (!window)
         return null;
     if (window.unlimited)
-        return {name: getQuotaName(window), value: 'Unlimited', reset: null};
+        return {name: formatQuotaName(window), value: 'Unlimited', reset: null};
     if (!Number.isFinite(window.usedPercent))
         return null;
     return {
-        name: getQuotaName(window),
+        name: formatQuotaName(window),
         value: `${Math.round(window.usedPercent)}%`,
-        reset: formatResetTime(window.resetsAt, now),
+        reset: formatResetCountdown(window.resetsAt, now) ?? 'Unknown',
     };
 }
 
