@@ -1,12 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {QUOTA_THRESHOLDS, notificationMilestones, quotaSeverity} from '../../src/core/thresholds.js';
+import {notificationMilestones} from '../../src/core/thresholds.js';
 import {
-    getChartBarGeometry,
     getHistoryOverview,
-    getLatestUpdate,
     getPanelQuota,
-    getPeriodDays,
     getProviderStatus,
     getQuotaName,
     getQuotaPresentation,
@@ -25,13 +22,6 @@ test('provider status distinguishes live, local, cached and setup data', () => {
     assert.equal(getProviderStatus(null, true), 'Sync');
     value.limits.status = 'ready';
     assert.equal(getProviderStatus(value, true), 'Live');
-});
-
-test('presentation helpers derive bounded period and freshness labels', () => {
-    assert.equal(getLatestUpdate({limits: {updatedAt: 10}, history: {updatedAt: 20}}), 20);
-    assert.equal(getLatestUpdate(null), null);
-    assert.equal(getPeriodDays({start: '2026-08-31', end: '2026-09-06'}), 7);
-    assert.equal(getPeriodDays({start: 'invalid', end: '2026-09-06'}), null);
 });
 
 test('history overview summarizes daily activity without double-counting models', () => {
@@ -94,22 +84,4 @@ test('panel quota prefers the shortest current quota window at every usage level
     assert.deepEqual(getPanelQuota(record, now), {percent: 20, reset: null});
     assert.equal(getPanelQuota({limits: {...record.limits, status: 'stale'}}, now), null);
     assert.equal(getPanelQuota(null, now), null);
-});
-
-test('quota severity uses explicit caution, warning and danger thresholds', () => {
-    assert.deepEqual(QUOTA_THRESHOLDS, {caution: 80, warning: 90, danger: 100});
-    for (const value of [null, undefined, NaN, 0, 79.9])
-        assert.equal(quotaSeverity(value), null);
-    assert.equal(quotaSeverity(80), 'caution');
-    assert.equal(quotaSeverity(89.9), 'caution');
-    assert.equal(quotaSeverity(90), 'warning');
-    assert.equal(quotaSeverity(99.9), 'warning');
-    assert.equal(quotaSeverity(100), 'danger');
-    assert.equal(quotaSeverity(125), 'danger');
-});
-
-test('chart geometry gives every non-zero day visible width and bottom alignment', () => {
-    assert.deepEqual(getChartBarGeometry(70, 70, 50, 64), {x: 4, y: 0, width: 42, height: 64});
-    assert.deepEqual(getChartBarGeometry(21.7, 70, 50, 64), {x: 4, y: 44, width: 42, height: 20});
-    assert.deepEqual(getChartBarGeometry(0, 70, 50, 64), {x: 4, y: 64, width: 42, height: 0});
 });

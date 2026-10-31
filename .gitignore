@@ -1,8 +1,6 @@
-/build/
 /dist/
 /.cache/
 /.ruff_cache/
-meson-private/
 
 # Local agent workspace and visual research are not product source.
 /.AGENTS/

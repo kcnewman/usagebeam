@@ -2,8 +2,8 @@ import Adw from 'gi://Adw';
 import Gtk from 'gi://Gtk';
 import {PROVIDER_NAMES, getEnabledProviders, normalizeProviderOrder} from '../core/providerRegistry.js';
 
-const PANEL_POSITIONS = Object.freeze(['left', 'right', 'left-of-calendar', 'right-of-calendar']);
-const PANEL_POSITION_LABELS = Object.freeze(['Left panel', 'Right panel', 'Left of calendar', 'Right of calendar']);
+const PANEL_POSITIONS = Object.freeze(['left', 'right']);
+const PANEL_POSITION_LABELS = Object.freeze(['Left panel', 'Right panel']);
 
 function createMoveButton(icon, tooltip, enabled, callback) {
     const button = new Gtk.Button({icon_name: icon, tooltip_text: tooltip, sensitive: enabled,
@@ -32,7 +32,7 @@ function buildProviderGroup(page, settings, signals) {
         const selected = new Set(settings.get_strv('enabled-providers'));
         order.forEach((id, index) => {
             const row = new Adw.SwitchRow({title: PROVIDER_NAMES[id],
-                subtitle: id === 'opencode' ? 'Local token and model activity' : 'Account limits and local activity',
+                subtitle: 'Account limits and local activity',
                 active: selected.has(id)});
             row.add_suffix(createMoveButton('go-up-symbolic', `Move ${PROVIDER_NAMES[id]} up`, index > 0, () => {
                 const next = [...order];
@@ -98,13 +98,13 @@ function buildPanelGroup(page, settings, signals) {
     const group = new Adw.PreferencesGroup({title: 'Panel'});
     page.add(group);
     const positionRow = new Adw.ComboRow({title: 'Panel position',
-        subtitle: 'Choose a side area or place usage beside the calendar',
+        subtitle: 'Choose the left or right panel area',
         model: Gtk.StringList.new(PANEL_POSITION_LABELS)});
     let syncing = false;
     const syncPosition = () => {
         syncing = true;
         const selected = PANEL_POSITIONS.indexOf(settings.get_string('panel-position'));
-        positionRow.selected = selected >= 0 ? selected : 3;
+        positionRow.selected = selected >= 0 ? selected : 1;
         syncing = false;
     };
     positionRow.connect('notify::selected', () => {

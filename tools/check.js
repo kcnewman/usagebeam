@@ -9,4 +9,4 @@ checkJavaScript(javascriptFiles);
 checkPython(pythonFiles);
 checkRepository();
 
-console.log(`Syntax, named imports, architecture, dependency cycles, formatting, repository layout, links, release metadata and schema checks passed (${javascriptFiles.length} JavaScript files).`);
+console.log(`Source, import boundaries, documentation links, release metadata and schemas passed (${javascriptFiles.length} JavaScript files).`);

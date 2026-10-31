@@ -18,7 +18,7 @@ export function getLatestUpdate(record) {
     return timestamps.length ? Math.max(...timestamps) : null;
 }
 
-export function getPeriodDays(period) {
+function getPeriodDays(period) {
     const start = Date.parse(`${period?.start ?? ''}T00:00:00Z`);
     const end = Date.parse(`${period?.end ?? ''}T00:00:00Z`);
     if (!Number.isFinite(start) || !Number.isFinite(end) || end < start)
@@ -86,20 +86,5 @@ export function getPanelQuota(record, now = Date.now()) {
     return {
         percent: Math.round(window.usedPercent),
         reset: formatResetCountdown(window.resetsAt, now),
-    };
-}
-
-export function getChartBarGeometry(value, maximum, width, height, inset = 4) {
-    const availableWidth = Math.max(0, width - inset * 2);
-    const availableHeight = Math.max(0, height);
-    const ratio = maximum > 0 && value > 0 ? Math.min(1, value / maximum) : 0;
-    const barHeight = ratio && availableHeight
-        ? Math.min(availableHeight, Math.max(3, Math.round(availableHeight * ratio)))
-        : 0;
-    return {
-        x: inset,
-        y: availableHeight - barHeight,
-        width: availableWidth,
-        height: barHeight,
     };
 }

@@ -6,7 +6,6 @@ export const buildPath = (...parts) => GLib.build_filenamev(parts);
 export const fingerprint = value => GLib.compute_checksum_for_string(GLib.ChecksumType.SHA256, String(value), -1);
 
 const PRODUCT_DIRECTORY = 'usagebeam';
-const LEGACY_DIRECTORY = 'freeby';
 
 function readBoundedFileText(path, fallback = null, maxBytes = 16 * 1024 * 1024) {
     if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0)
@@ -74,36 +73,4 @@ export function clearDerivedData({state = stateDirectory(), cache = cacheDirecto
         }
     }
     return removed;
-}
-
-export function migrateLegacyData({
-    legacyState = buildPath(GLib.get_user_state_dir(), LEGACY_DIRECTORY),
-    legacyCache = buildPath(GLib.get_user_cache_dir(), LEGACY_DIRECTORY),
-    state = stateDirectory(),
-    cache = cacheDirectory(),
-} = {}) {
-    const groups = [
-        {source: legacyState, destination: state, names: PROVIDER_IDS.map(id => `${id}.json`),
-            maxBytes: 16 * 1024 * 1024},
-        {source: legacyCache, destination: cache, names: PROVIDER_IDS.map(id => `history-${id}.json`),
-            maxBytes: 64 * 1024 * 1024},
-    ];
-    let migrated = 0;
-    for (const group of groups) {
-        for (const name of group.names) {
-            const destination = buildPath(group.destination, name);
-            if (Gio.File.new_for_path(destination).query_exists(null))
-                continue;
-            const value = readJson(buildPath(group.source, name), null, group.maxBytes);
-            if (value === null)
-                continue;
-            try {
-                writeJson(destination, value);
-                migrated++;
-            } catch {
-                // Migration is best-effort; collection can rebuild derived data.
-            }
-        }
-    }
-    return migrated;
 }

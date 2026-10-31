@@ -2,7 +2,7 @@ import GLib from 'gi://GLib';
 
 const CHUNK_BYTES = 65536;
 
-export function readStreamChunk(stream, cancellable) {
+function readStreamChunk(stream, cancellable) {
     return new Promise((resolve, reject) => {
         stream.read_bytes_async(CHUNK_BYTES, GLib.PRIORITY_DEFAULT, cancellable, (input, result) => {
             try {

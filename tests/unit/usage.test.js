@@ -3,7 +3,6 @@ import test from 'node:test';
 import {aggregateEvents} from '../../src/core/activity.js';
 import {getRecentDates, normalizeTimestamp} from '../../src/core/dates.js';
 import {
-    formatCompactTokenCount,
     formatModelName,
     formatResetCountdown,
     formatResetTime,
@@ -23,8 +22,10 @@ test('unknown metrics are not coerced to zero', () => {
 });
 
 test('provider selection is ordered, deduplicated and restricted to supported adapters', () => {
-    assert.deepEqual(normalizeProviderOrder(['claude', 'unknown', 'claude']), ['claude', 'codex', 'opencode']);
-    assert.deepEqual(normalizeProviderOrder(null), ['codex', 'claude', 'opencode']);
+    assert.deepEqual(normalizeProviderOrder(['claude', 'unknown', 'claude']), ['claude', 'codex']);
+    assert.deepEqual(normalizeProviderOrder(null), ['codex', 'claude']);
+    assert.deepEqual(getEnabledProviders(['unknown', 'codex'], ['unknown', 'claude', 'codex']), ['codex']);
+    assert.deepEqual(getEnabledProviders(['unknown'], []), []);
     assert.deepEqual(getEnabledProviders(['codex', 'claude', 'unknown'], ['claude', 'codex']),
         ['claude', 'codex']);
     assert.deepEqual(getEnabledProviders(['claude'], []), ['claude']);
@@ -184,11 +185,8 @@ test('notification eviction retains recently refreshed windows and accepts fresh
 test('formatting preserves unknown/reset-due states', () => {
     assert.equal(formatTokenCount(null), '—');
     assert.equal(formatTokenCount(23000000), '23.0M');
-    assert.equal(formatCompactTokenCount(186000000), '186M');
-    assert.equal(formatCompactTokenCount(56300000), '56.3M');
     assert.equal(formatTokenCount(999999999), '1000.0M');
     assert.equal(formatTokenCount(1200000000000), '1.2T');
-    assert.equal(formatCompactTokenCount(1000000000000000), '1P');
     assert.equal(formatTokenCount(Number.MAX_SAFE_INTEGER), '9.0P');
     assert.equal(formatResetTime(null), 'Reset time unavailable');
     assert.match(formatResetTime(100, 200), /awaiting update/);

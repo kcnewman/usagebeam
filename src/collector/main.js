@@ -6,13 +6,12 @@ import {createUsageRecord, createUsageSection} from '../core/usage.js';
 import {validateUsageRecord} from '../core/usageValidation.js';
 import {collectClaude} from '../providers/claude.js';
 import {collectCodex} from '../providers/codex.js';
-import {collectOpenCode} from '../providers/opencode.js';
 import {createCollectorContext} from './context.js';
 
-const COLLECTORS = Object.freeze({codex: collectCodex, claude: collectClaude, opencode: collectOpenCode});
+const COLLECTORS = Object.freeze({codex: collectCodex, claude: collectClaude});
 const providerId = ARGV[0];
 if (!Object.prototype.hasOwnProperty.call(COLLECTORS, providerId)) {
-    printerr('Usage: gjs -m src/collector/main.js <codex|claude|opencode> [retention-days]');
+    printerr('Usage: gjs -m src/collector/main.js <codex|claude> [retention-days]');
     System.exit(2);
 }
 const retentionText = ARGV[1] ?? '';

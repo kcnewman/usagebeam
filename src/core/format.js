@@ -8,10 +8,6 @@ export function formatTokenCount(value) {
     return String(Math.round(value));
 }
 
-export function formatCompactTokenCount(value) {
-    return formatTokenCount(value).replace(/\.0(?=[PTBMK]$)/, '');
-}
-
 export function formatResetTime(time, now = Date.now()) {
     if (!Number.isFinite(time) || time <= 0)
         return 'Reset time unavailable';
