@@ -41,6 +41,11 @@ def install(source, archive, prefix, destination):
                 target = extension.joinpath(*parts)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(payload.read(entry))
+        # Mirror `gnome-extensions install`, which compiles shipped schema XML.
+        subprocess.run(
+            ["glib-compile-schemas", "--strict", str(extension / "schemas")],
+            check=True,
+        )
         return
     built_archive = Path(subprocess.check_output(
         [sys.executable, "-B", str(source / "tools/package.py"),
@@ -59,15 +64,17 @@ def seed_usage(destination):
     ]
 
     def record(provider, name, plan, percentages, models):
-        days = [
-            {
-                "date": day,
-                "total": [0, 0, 0, 0, 0, 70_700_000, 38_500_000][index],
-                "sessions": index + 1,
-                "events": index + 2,
-            }
-            for index, day in enumerate(dates)
-        ]
+        days = []
+        for index, day in enumerate(dates):
+            daily_models = []
+            if index >= 5:
+                for model in models:
+                    counts = {key: model[key] // (7 - index)
+                              for key in ("input", "output", "cacheRead", "cacheWrite")}
+                    daily_models.append({"model": model["model"],
+                                         "total": sum(counts.values()), **counts})
+            days.append({"date": day, "total": sum(m["total"] for m in daily_models),
+                         "sessions": index + 1, "events": index + 2, "models": daily_models})
         return {
             "schemaVersion": 2,
             "id": provider,

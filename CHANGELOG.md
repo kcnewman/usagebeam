@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.2.0 — 2026-11-18
+
+- Keep Claude account limits visible when Anthropic rate limits usage checks.
+  The panel shows the last reading in italics, then an estimate such as `~47%`
+  projected from local activity once that reading is over 15 minutes old or its
+  limit period has renewed.
+- Check Claude limits at most every five minutes. Honor `Retry-After`, back off
+  on repeated rate limits, keep manual refreshes from bypassing the wait, and
+  keep refreshing local history while limits are paused.
+- Add a History view with per-day model breakdowns.
+- Address extensions.gnome.org review warnings: no blocking file IO in Shell or
+  preferences code, no compiled schemas in the package, and Shell-tracked
+  settings signals.
+- Local history caches are rebuilt once after upgrading to record event times.
+
 ## 2.1.0 — 2026-10-31
 
 - Prepare GNOME 51 menu and keyboard compatibility; native Shell 51 validation

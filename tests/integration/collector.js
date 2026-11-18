@@ -7,7 +7,8 @@ import {loadProviderSnapshot, readProviderSnapshot, saveProviderSnapshot} from '
 import {parseClaudeEvent} from '../../src/providers/claude.js';
 import {parseCodexEvent} from '../../src/providers/codex.js';
 import {createCommandSpec, findCommand} from '../../src/services/commands.js';
-import {buildPath, clearDerivedData, readJson, writeJson} from '../../src/services/files.js';
+import {buildPath, clearDerivedData, readJsonAsync, writeJsonAsync} from '../../src/services/files.js';
+import {readJson, writeJson} from '../../src/services/syncFiles.js';
 import {scanJsonlHistory} from '../../src/services/history.js';
 import {requestJson} from '../../src/services/http.js';
 import {normalizeSettings} from '../../src/services/settings.js';
@@ -15,6 +16,21 @@ import {getProviderTerminalSpec} from '../../src/services/terminalLauncher.js';
 import {runCommand} from '../../src/services/process.js';
 import {RpcClient} from '../../src/services/rpcClient.js';
 import {UsageService} from '../../src/services/usageService.js';
+import {getTodayActivity} from '../../src/ui/presentation.js';
+
+// Drives one promise to completion without making this module asynchronous.
+function settle(promise) {
+    const waitLoop = new GLib.MainLoop(null, false);
+    let outcome = null;
+    promise.then(value => { outcome = {value}; waitLoop.quit(); },
+        error => { outcome = {error}; waitLoop.quit(); });
+    if (!outcome)
+        waitLoop.run();
+    if ('error' in outcome)
+        throw outcome.error;
+    return outcome.value;
+}
+
 
 function assert(value, message) {
     if (!value)
@@ -38,7 +54,7 @@ GLib.file_set_contents(fixture, `${text}${event(180)}\n{"partial":`);
 const third = scanJsonlHistory('codex', [sessions], parseCodexEvent, {now, cachePath});
 assert(third.days.at(-1).total === 180, 'append must count delta only');
 const cache = readJson(cachePath);
-assert(cache.version === 6, 'versioned cache');
+assert(cache.version === 7, 'versioned cache');
 assert(!JSON.stringify(cache).includes('synthetic'), 'session identity must be sanitized in cache');
 assert(third.days.at(-1).sessions === 1, 'resumed scans must retain one stable private session identity');
 const privateDirectory = buildPath(scratch, 'private-state');
@@ -47,28 +63,62 @@ GLib.chmod(privateDirectory, 0o755);
 const privateRecord = buildPath(privateDirectory, 'record.json');
 writeJson(privateRecord, {safe: true});
 assert(readJson(privateRecord).safe, 'atomic JSON roundtrip');
+const asyncRecord = buildPath(scratch, 'async-private', 'record.json');
+settle(writeJsonAsync(asyncRecord, {safe: 'async'}));
+assert(settle(readJsonAsync(asyncRecord)).safe === 'async', 'asynchronous JSON roundtrip');
+assert((Gio.File.new_for_path(asyncRecord).query_info('unix::mode', Gio.FileQueryInfoFlags.NONE, null)
+    .get_attribute_uint32('unix::mode') & 0o777) === 0o600, 'asynchronous writes must stay private');
+assert(settle(readJsonAsync(buildPath(scratch, 'missing.json'), 'fallback')) === 'fallback', 'missing async read fallback');
 const directoryInfo = Gio.File.new_for_path(privateDirectory).query_info('unix::mode', Gio.FileQueryInfoFlags.NONE, null);
 assert((directoryInfo.get_attribute_uint32('unix::mode') & 0o777) === 0o700, 'private JSON directory mode');
 const stateInfo = Gio.File.new_for_path(privateRecord).query_info('unix::mode', Gio.FileQueryInfoFlags.NONE, null);
 assert((stateInfo.get_attribute_uint32('unix::mode') & 0o777) === 0o600, 'private JSON file mode');
 print('PASS: GJS history initial scan, cached scan, append, partial line, and private JSON cache');
 
+const midnightRoot = buildPath(scratch, 'midnight');
+GLib.mkdir_with_parents(midnightRoot, 0o700);
+const midnightFile = buildPath(midnightRoot, 'session.jsonl');
+const midnightCache = buildPath(scratch, 'midnight-cache.json');
+const before = new Date('2026-09-05T23:59:00');
+const after = new Date('2026-09-06T00:01:00');
+const midnightEvent = (time, total) => JSON.parse(event(total).replace('2026-09-06T10:00:00Z', time.toISOString()));
+const beforeText = JSON.stringify(midnightEvent(before, 100)) + '\n';
+GLib.file_set_contents(midnightFile, beforeText);
+scanJsonlHistory('codex', [midnightRoot], parseCodexEvent,
+    {now: before.getTime(), cachePath: midnightCache});
+const emptyToday = scanJsonlHistory('codex', [midnightRoot], parseCodexEvent,
+    {now: after.getTime(), cachePath: midnightCache});
+assert(emptyToday.scannedFiles === 0 && getTodayActivity(emptyToday, after.getTime()).total === 0,
+    'warm cache must roll over to a genuinely empty day');
+GLib.file_set_contents(midnightFile, beforeText + JSON.stringify(midnightEvent(after, 160)) + '\n');
+const newDay = scanJsonlHistory('codex', [midnightRoot], parseCodexEvent,
+    {now: after.getTime(), cachePath: midnightCache});
+const today = getTodayActivity(newDay, after.getTime());
+assert(today.total === 60 && today.models[0].total === 60 && newDay.days.at(-2).total === 100,
+    'cross-midnight cumulative session must count only new increments today');
+Gio.File.new_for_path(midnightFile).delete(null);
+const missing = scanJsonlHistory('codex', [midnightRoot], parseCodexEvent,
+    {now: after.getTime() + 86400000, cachePath: midnightCache});
+assert(missing.status === 'stale' && getTodayActivity(missing, after.getTime() + 86400000) === null,
+    'missing sources must not fabricate zero usage for an unscanned day');
+print('PASS: GJS local midnight, retained daily models, warm cache and cross-midnight token deltas');
+
 const snapshotDirectory = buildPath(scratch, 'snapshots');
 const snapshot = createUsageRecord('codex');
 snapshot.capabilities.limits = true;
 snapshot.limits = {...snapshot.limits, status: 'ready', updatedAt: now, source: 'Synthetic account limits',
     windows: [createQuotaWindow({id: 'weekly', label: 'Weekly', usedPercent: 25, resetsAt: now + 60000})]};
-assert(saveProviderSnapshot(snapshot, snapshotDirectory), 'snapshot persistence must succeed in a private directory');
-assert(readProviderSnapshot('codex', snapshotDirectory).limits.status === 'ready',
+assert(settle(saveProviderSnapshot(snapshot, snapshotDirectory)), 'snapshot persistence must succeed in a private directory');
+assert(settle(readProviderSnapshot('codex', snapshotDirectory)).limits.status === 'ready',
     'Settings diagnostics must preserve saved status instead of applying the live-cache stale transition');
-const restoredSnapshot = loadProviderSnapshot('codex', snapshotDirectory);
+const restoredSnapshot = settle(loadProviderSnapshot('codex', snapshotDirectory));
 assert(restoredSnapshot.limits.status === 'stale' && restoredSnapshot.limits.updatedAt === now &&
     restoredSnapshot.limits.windows[0].usedPercent === 25,
     'snapshot restore must retain usage and freshness while marking saved data stale');
 writeJson(buildPath(snapshotDirectory, 'codex.json'), {rawResponse: 'REJECTED_SYNTHETIC_FIELD'});
-assert(loadProviderSnapshot('codex', snapshotDirectory).limits.status === 'loading',
+assert(settle(loadProviderSnapshot('codex', snapshotDirectory)).limits.status === 'loading',
     'invalid snapshots must produce an empty contract instead of exposing unknown fields');
-assert(!saveProviderSnapshot(snapshot, privateRecord),
+assert(!settle(saveProviderSnapshot(snapshot, privateRecord)),
     'snapshot persistence failures must remain independent from live usage');
 print('PASS: GJS snapshot validation, stale restoration, and persistence failure isolation');
 
@@ -79,7 +129,7 @@ writeJson(buildPath(clearCache, 'unrelated.json'), {preserve: true});
 GLib.mkdir_with_parents(buildPath(clearState, 'claude.json'), 0o700);
 Gio.File.new_for_path(buildPath(clearCache, 'history-claude.json'))
     .make_symbolic_link(buildPath(clearCache, 'unrelated.json'), null);
-assert(clearDerivedData({state: clearState, cache: clearCache}) === 2,
+assert(settle(clearDerivedData({state: clearState, cache: clearCache})) === 2,
     'clear data must remove only recognized regular files and links');
 assert(!Gio.File.new_for_path(buildPath(clearState, 'codex.json')).query_exists(null),
     'clear data must remove provider state');
@@ -146,13 +196,17 @@ const service = Object.assign(Object.create(UsageService.prototype), {
     _pendingCollections: new Map([['codex', {cancel: () => { cancelledJob = true; }}]]),
     _lastAttemptAt: new Map([['codex', 1]]),
     _failureCounts: new Map([['codex', 2]]),
+    _limitsAttemptAt: new Map([['claude', 1]]),
+    _limitsNotBefore: new Map([['claude', 2]]),
+    _rateLimitStrikes: new Map([['claude', 3]]),
     _thresholdTracker: previousThresholds,
     _recordsByProvider: {codex: {saved: true}},
     _emitChanged: () => { changedRecords++; },
     refreshAll: force => { forcedRefresh = force; },
 });
 service.clearSavedData();
-assert(cancelledJob && !service._pendingCollections.size && !service._lastAttemptAt.size && !service._failureCounts.size,
+assert(cancelledJob && !service._pendingCollections.size && !service._lastAttemptAt.size && !service._failureCounts.size &&
+    !service._limitsAttemptAt.size && !service._limitsNotBefore.size && !service._rateLimitStrikes.size,
     'clear data must cancel in-flight work and reset scheduler state');
 assert(Object.keys(service._recordsByProvider).join(',') === 'claude,codex' &&
     Object.values(service._recordsByProvider).every(value => value.schemaVersion === 2),
@@ -184,11 +238,37 @@ const claudeLine = JSON.stringify({type: 'assistant', sessionId: 'claude-session
         output_tokens: 3, cache_read_input_tokens: 40, cache_creation_input_tokens: 5}}});
 GLib.file_set_contents(buildPath(claudeProjects, 'session.jsonl'), `${claudeLine}\n${claudeLine}\n`);
 const claudeCache = buildPath(scratch, 'claude-cache.json');
-const claude = scanJsonlHistory('claude', [claudeProjects], parseClaudeEvent, {now, cachePath: claudeCache});
+const previousClaude = JSON.parse(claudeLine);
+previousClaude.timestamp = new Date('2026-09-05T23:59:00').toISOString();
+previousClaude.message.id = 'previous-day-message';
+previousClaude.message.model = 'claude-other-model';
+GLib.file_set_contents(buildPath(claudeProjects, 'previous.jsonl'), JSON.stringify(previousClaude) + '\n');
+let claudeEvents = [];
+const claude = scanJsonlHistory('claude', [claudeProjects], parseClaudeEvent, {now, cachePath: claudeCache,
+    onEvents: events => { claudeEvents = events; }});
+assert(claudeEvents.length === 2 && claudeEvents.some(item => item.at === Date.parse('2026-09-06T11:00:00Z')),
+    'Claude scans must expose timestamped events for quota estimates');
 assert(claude.days.at(-1).total === 50, 'duplicate Claude messages must count once');
 assert(claude.models[0].cacheRead === 40 && claude.models[0].cacheWrite === 5, 'Claude cache categories');
+assert(getTodayActivity(claude, now).models.length === 1 &&
+    getTodayActivity(claude, now).models[0].model === 'claude-test' &&
+    claude.days.at(-2).models[0].model === 'claude-other-model',
+    'Claude daily model breakdowns must exclude other days');
+const tomorrow = new Date('2026-09-07T00:01:00').getTime();
+const claudeRollover = scanJsonlHistory('claude', [claudeProjects], parseClaudeEvent, {now: tomorrow, cachePath: claudeCache});
+assert(claudeRollover.scannedFiles === 0 && getTodayActivity(claudeRollover, tomorrow).total === 0 &&
+    claudeRollover.days.at(-2).total === 50, 'Claude warm cache must roll over without losing yesterday');
+const nextClaude = JSON.parse(claudeLine);
+nextClaude.timestamp = new Date(tomorrow).toISOString();
+nextClaude.message.id = 'next-day-message';
+nextClaude.message.usage.output_tokens = 28;
+GLib.file_set_contents(buildPath(claudeProjects, 'session.jsonl'), `${claudeLine}\n${claudeLine}\n${JSON.stringify(nextClaude)}\n`);
+const claudeAppend = scanJsonlHistory('claude', [claudeProjects], parseClaudeEvent, {now: tomorrow, cachePath: claudeCache});
+assert(getTodayActivity(claudeAppend, tomorrow).total === 75 &&
+    getTodayActivity(claudeAppend, tomorrow).models[0].total === 75 && claudeAppend.days.at(-2).total === 50,
+    'Claude append after midnight must preserve cache categories and count each message once');
 assert(!JSON.stringify(readJson(claudeCache)).includes('claude-session'), 'Claude session identity must be sanitized');
-print('PASS: GJS Claude history deduplication, model totals, and private cache');
+print('PASS: GJS Claude daily model totals, midnight rollover, append deduplication, and private cache');
 
 for (const version of ['v20.12.0', 'v24.16.0']) {
     const bin = buildPath(scratch, '.local', 'share', 'fnm', 'node-versions', version, 'installation', 'bin');

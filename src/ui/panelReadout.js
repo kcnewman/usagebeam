@@ -43,14 +43,18 @@ export const UsageBeamPanelReadout = GObject.registerClass(class UsageBeamPanelR
             this._providerId = id;
         }
         const quota = getPanelQuota(record);
-        this.valueLabel.text = quota ? `${quota.percent}%` : '—';
+        this.valueLabel.text = quota?.text ?? '—';
         const severity = quotaSeverity(quota?.percent);
         const variant = Main.getStyleVariant();
-        this.valueLabel.style_class = `usagebeam-metric usagebeam-panel-value${severity ? ` usagebeam-${severity}` : ''} usagebeam-${variant}`;
+        this.valueLabel.style_class = `usagebeam-metric usagebeam-panel-value${severity ? ` usagebeam-${severity}` : ''}` +
+            `${quota && quota.source !== 'live' ? ' usagebeam-panel-value-stale' : ''} usagebeam-${variant}`;
         const resetDescription = quota?.reset === 'due' ? ', reset due' :
             quota?.reset ? `, resets in ${quota.reset}` : '';
         const status = getProviderStatus(record, refreshing).toLowerCase();
-        return `UsageBeam, ${name}, ${status}${quota ? `, ${quota.percent} percent used${resetDescription}` :
+        const qualifier = quota?.source === 'estimate' ? 'about ' : '';
+        const origin = quota?.source === 'estimate' ? ', estimated from local activity'
+            : quota?.source === 'cached' ? ', last reading' : '';
+        return `UsageBeam, ${name}, ${status}${quota ? `, ${qualifier}${quota.percent} percent used${origin}${resetDescription}` :
             ', usage unavailable'}`;
     }
 
@@ -62,7 +66,7 @@ export const UsageBeamPanelReadout = GObject.registerClass(class UsageBeamPanelR
         this._measurementKey = key;
         this._measurementActor.destroy_all_children();
         for (const id of providers) {
-            const sample = '999%';
+            const sample = '~100%';
             const row = new St.BoxLayout({style_class: 'usagebeam-panel-status'});
             const icon = new St.Bin({style_class: 'usagebeam-panel-icon-slot',
                 y_align: Clutter.ActorAlign.CENTER});

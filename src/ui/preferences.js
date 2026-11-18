@@ -125,7 +125,7 @@ function buildDataGroup(page, window, settings, clearData) {
     const group = new Adw.PreferencesGroup({title: 'Saved data'});
     page.add(group);
     const retention = new Adw.SpinRow({title: 'Retention (days)',
-        subtitle: 'Local metadata only. Activity always shows the past 7 days.',
+        subtitle: 'Days kept in History. Activity shows today.',
         adjustment: new Gtk.Adjustment({lower: 7, upper: 90, step_increment: 1, page_increment: 7})});
     settings.bind('history-retention-days', retention, 'value', 0);
     group.add(retention);
@@ -139,10 +139,15 @@ function buildDataGroup(page, window, settings, clearData) {
         dialog.set_default_response('cancel');
         dialog.set_close_response('cancel');
         dialog.set_response_appearance('clear', Adw.ResponseAppearance.DESTRUCTIVE);
-        dialog.connect('response', (_dialog, response) => {
+        dialog.connect('response', async (_dialog, response) => {
             if (response !== 'clear')
                 return;
-            const removed = clearData();
+            let removed = 0;
+            try {
+                removed = await clearData();
+            } catch {
+                removed = 0;
+            }
             settings.set_uint('clear-data-generation', (settings.get_uint('clear-data-generation') + 1) >>> 0);
             window.add_toast(new Adw.Toast({title: removed ? 'Saved usage cleared' : 'No saved usage to clear'}));
         });
@@ -157,11 +162,24 @@ function buildUsageDetails(page, settings, signals, readRecord) {
         description: 'Saved results. Refresh usage from the panel for new data.'});
     page.add(group);
     let rows = [];
-    const render = () => {
+    let generation = 0;
+    const render = async () => {
+        // Snapshots load asynchronously; only the latest request may rebuild the rows.
+        const current = ++generation;
+        const ids = getEnabledProviders(settings.get_strv('enabled-providers'), settings.get_strv('provider-order'));
+        const records = await Promise.all(ids.map(async id => {
+            try {
+                return await readRecord(id);
+            } catch {
+                return null;
+            }
+        }));
+        if (current !== generation || !group.get_root())
+            return;
         const expanded = new Set(rows.filter(row => row.expanded).map(row => row.title));
         rows.forEach(row => group.remove(row));
-        rows = getEnabledProviders(settings.get_strv('enabled-providers'), settings.get_strv('provider-order')).map(id => {
-            const record = readRecord(id);
+        rows = ids.map((id, index) => {
+            const record = records[index];
             const row = new Adw.ExpanderRow({title: PROVIDER_NAMES[id],
                 subtitle: record ? formatUpdateAge(getLatestUpdate(record)) : 'No saved usage',
                 expanded: expanded.has(PROVIDER_NAMES[id])});
@@ -170,7 +188,7 @@ function buildUsageDetails(page, settings, signals, readRecord) {
             row.add_row(new Adw.ActionRow({title: 'Account limits',
                 subtitle: describeSection(record?.limits, 'Available')}));
             row.add_row(new Adw.ActionRow({title: 'Local activity',
-                subtitle: describeSection(record?.history, 'Past 7 days on this device')}));
+                subtitle: describeSection(record?.history, 'Daily tokens on this device')}));
             group.add(row);
             return row;
         });

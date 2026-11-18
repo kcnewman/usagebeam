@@ -12,12 +12,13 @@ import {createCollectorContext} from './context.js';
 const COLLECTORS = Object.freeze({codex: collectCodex, claude: collectClaude});
 const providerId = ARGV[0];
 if (!Object.prototype.hasOwnProperty.call(COLLECTORS, providerId)) {
-    printerr('Usage: gjs -m src/collector/main.js <codex|claude> [retention-days]');
+    printerr('Usage: gjs -m src/collector/main.js <codex|claude> [retention-days] [--skip-limits]');
     System.exit(2);
 }
 const retentionText = ARGV[1] ?? '';
 const requestedRetention = /^\d+$/.test(retentionText) ? Number(retentionText) : 30;
 const retentionDays = Math.max(7, Math.min(90, Number.isSafeInteger(requestedRetention) ? requestedRetention : 30));
+const skipLimits = ARGV.slice(2).includes('--skip-limits');
 const cancellable = new Gio.Cancellable();
 const mainLoop = new GLib.MainLoop(null, false);
 let terminationSignalId = GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, 15, () => {
@@ -28,7 +29,7 @@ let terminationSignalId = GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, 15, () => {
 
 async function collectAndPrintUsage() {
     try {
-        const context = createCollectorContext({cancellable, retentionDays});
+        const context = createCollectorContext({cancellable, retentionDays, skipLimits});
         const result = validateUsageRecord(await COLLECTORS[providerId](context), providerId);
         if (!cancellable.is_cancelled())
             print(JSON.stringify(result));

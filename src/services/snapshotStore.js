@@ -1,17 +1,17 @@
 import {createUsageRecord, createUsageSection} from '../core/usage.js';
 import {validateUsageRecord} from '../core/usageValidation.js';
-import {buildPath, readJson, stateDirectory, writeJson} from './files.js';
+import {buildPath, readJsonAsync, stateDirectory, writeJsonAsync} from './files.js';
 
-export function readProviderSnapshot(providerId, directory = stateDirectory()) {
+export async function readProviderSnapshot(providerId, directory = stateDirectory()) {
     try {
-        return validateUsageRecord(readJson(buildPath(directory, `${providerId}.json`)), providerId);
+        return validateUsageRecord(await readJsonAsync(buildPath(directory, `${providerId}.json`)), providerId);
     } catch {
         return null;
     }
 }
 
-export function loadProviderSnapshot(providerId, directory = stateDirectory()) {
-    const cached = readProviderSnapshot(providerId, directory);
+export async function loadProviderSnapshot(providerId, directory = stateDirectory()) {
+    const cached = await readProviderSnapshot(providerId, directory);
     if (cached) {
         for (const name of ['limits', 'history']) {
             if (['ready', 'partial', 'stale'].includes(cached[name].status)) {
@@ -26,9 +26,9 @@ export function loadProviderSnapshot(providerId, directory = stateDirectory()) {
     return cached ?? createUsageRecord(providerId);
 }
 
-export function saveProviderSnapshot(record, directory = stateDirectory()) {
+export async function saveProviderSnapshot(record, directory = stateDirectory()) {
     try {
-        writeJson(buildPath(directory, `${record.id}.json`), record);
+        await writeJsonAsync(buildPath(directory, `${record.id}.json`), record);
         return true;
     } catch {
         // Persistence failures must not hide the current provider result.

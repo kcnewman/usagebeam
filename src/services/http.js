@@ -1,5 +1,6 @@
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
+import {parseRetryAfter} from '../core/refreshPolicy.js';
 import {readStreamText} from './streams.js';
 
 const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -47,7 +48,8 @@ export async function requestJson(url, {method = 'GET', headers = {}, body = nul
         } catch {
             /* Status remains available for error handling. */
         }
-        return {status: message.status_code, data};
+        return {status: message.status_code, data,
+            retryAfterMs: parseRetryAfter(message.response_headers.get_one('Retry-After'))};
     } finally {
         try {
             input?.close(null);

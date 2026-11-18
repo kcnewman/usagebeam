@@ -55,6 +55,13 @@ export function mergeUsageRecords(previous, next, now = Date.now()) {
             }
         }
     }
+    // Rate-limit timing and projections always describe the latest collection.
+    if (result.limits !== next.limits) {
+        const {retryAt: _retryAt, estimate: _estimate, ...limits} = result.limits;
+        result.limits = {...limits,
+            ...(next.limits.retryAt !== undefined ? {retryAt: next.limits.retryAt} : {}),
+            ...(next.limits.estimate !== undefined ? {estimate: next.limits.estimate} : {})};
+    }
     if (result.limits.status === 'stale') {
         result.plan ??= previous.plan;
         result.accountKey ??= previous.accountKey;
@@ -62,7 +69,10 @@ export function mergeUsageRecords(previous, next, now = Date.now()) {
     return result;
 }
 
+// A rate-limited limits check has its own retry schedule and must not slow
+// local history refreshes.
 export function collectionNeedsBackoff(value) {
     return ['limits', 'history'].some(key => value.capabilities[key] &&
+        !(key === 'limits' && Number.isFinite(value.limits.retryAt)) &&
         ['unavailable', 'missing-auth'].includes(value[key].status));
 }
