@@ -23,20 +23,19 @@ export default class UsageBeamExtension extends Extension {
             onAlerts: alerts => this._notifications?.show(alerts),
         });
         this._indicator.attach(this._service);
-        this._settingsIds = [];
         const configureProviders = () => {
             this._service.configure();
             this._indicator.render();
             this._service.refreshAll();
         };
-        for (const key of ['enabled-providers', 'provider-order'])
-            this._settingsIds.push(this._settings.connect(`changed::${key}`, configureProviders));
-        this._settingsIds.push(this._settings.connect('changed::default-provider', () => this._indicator.render()));
-        this._settingsIds.push(this._settings.connect('changed::panel-position', () => this._placeIndicator()));
-        this._settingsIds.push(this._settings.connect('changed::clear-data-generation', () =>
-            this._service.clearSavedData()));
-        this._settingsIds.push(this._settings.connect('changed::history-retention-days', () =>
-            this._service.refreshAll(true)));
+        this._settings.connectObject(
+            'changed::enabled-providers', configureProviders,
+            'changed::provider-order', configureProviders,
+            'changed::default-provider', () => this._indicator.render(),
+            'changed::panel-position', () => this._placeIndicator(),
+            'changed::clear-data-generation', () => this._service.clearSavedData(),
+            'changed::history-retention-days', () => this._service.refreshAll(true),
+            this);
         this._service.refreshAll();
     }
 
@@ -45,9 +44,7 @@ export default class UsageBeamExtension extends Extension {
     }
 
     disable() {
-        for (const id of this._settingsIds ?? [])
-            this._settings.disconnect(id);
-        this._settingsIds = null;
+        this._settings?.disconnectObject(this);
         this._service?.destroy();
         this._service = null;
         this._notifications?.destroy();

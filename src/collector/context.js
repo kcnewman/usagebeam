@@ -1,12 +1,21 @@
 import GLib from 'gi://GLib';
 import {createCommandSpec, findCommand} from '../services/commands.js';
-import {buildPath, fingerprint, readJson} from '../services/files.js';
+import {buildPath, fingerprint, stateDirectory} from '../services/files.js';
+import {readJson, writeJson} from '../services/syncFiles.js';
 import {scanJsonlHistory} from '../services/history.js';
 import {requestJson} from '../services/http.js';
 import {RpcClient} from '../services/rpcClient.js';
 
 // Adapters receive capabilities, never Shell actors or scheduling state.
-export function createCollectorContext({cancellable, retentionDays}) {
+const STATE_NAMES = new Set(['claude-calibration']);
+
+function statePath(name) {
+    if (!STATE_NAMES.has(name))
+        throw new Error(`Unsupported collector state: ${name}`);
+    return buildPath(stateDirectory(), `${name}.json`);
+}
+
+export function createCollectorContext({cancellable, retentionDays, skipLimits = false}) {
     const historyRoots = {
         codex: GLib.getenv('CODEX_HOME') || buildPath(GLib.get_home_dir(), '.codex'),
         claude: GLib.getenv('CLAUDE_CONFIG_DIR') || buildPath(GLib.get_home_dir(), '.claude'),
@@ -14,7 +23,10 @@ export function createCollectorContext({cancellable, retentionDays}) {
 
     return {
         fingerprint,
+        skipLimits,
         now: () => Date.now(),
+        loadState: name => readJson(statePath(name), null, 256 * 1024),
+        saveState: (name, value) => writeJson(statePath(name), value),
         hasCommand(name) {
             try {
                 findCommand(name);

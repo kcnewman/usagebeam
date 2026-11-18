@@ -1,9 +1,9 @@
 import {getRecentDates} from './dates.js';
 import {parseNonNegativeNumber} from './values.js';
 
-export function aggregateEvents(events, now = Date.now(), count = 7) {
+export function aggregateEvents(events, now = Date.now(), count = 1) {
     const dates = getRecentDates(now, count);
-    const days = new Map(dates.map(date => [date, {date, total: 0, sessions: 0, events: 0}]));
+    const days = new Map(dates.map(date => [date, {date, total: 0, sessions: 0, events: 0, models: new Map()}]));
     const models = new Map();
     const seen = new Set();
     const sessions = new Map(dates.map(date => [date, new Set()]));
@@ -21,11 +21,16 @@ export function aggregateEvents(events, now = Date.now(), count = 7) {
         ['input', 'output', 'cacheRead', 'cacheWrite'].forEach((k, i) => { bucket[k] += tokens[i]; });
         bucket.total += total;
         models.set(model, bucket);
+        const daily = day.models.get(model) ?? {model, total: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0};
+        ['input', 'output', 'cacheRead', 'cacheWrite'].forEach((k, i) => { daily[k] += tokens[i]; });
+        daily.total += total;
+        day.models.set(model, daily);
         day.total += total;
         day.events++;
         sessions.get(event.date).add(event.session);
         day.sessions = sessions.get(event.date).size;
     }
-    return {period: {start: dates[0], end: dates.at(-1)}, days: [...days.values()],
+    return {period: {start: dates[0], end: dates.at(-1)},
+        days: [...days.values()].map(day => ({...day, models: [...day.models.values()].sort((a, b) => b.total - a.total)})),
         models: [...models.values()].sort((a, b) => b.total - a.total)};
 }

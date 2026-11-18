@@ -57,7 +57,7 @@ function validateRecordIdentity(value, expectedProviderId) {
 function validateUsageSections(value) {
     for (const name of ['limits', 'history']) {
         assertObjectShape(value[name], `${name} shape`, name === 'limits'
-            ? ['status', 'message', 'updatedAt', 'scope', 'source', 'windows']
+            ? ['status', 'message', 'updatedAt', 'scope', 'source', 'windows', 'retryAt', 'estimate']
             : ['status', 'message', 'updatedAt', 'scope', 'source', 'period', 'days', 'models', 'scannedFiles']);
         if (!value[name] || !USAGE_STATUSES.has(value[name].status))
             rejectUsageRecord(`${name} state`);
@@ -93,9 +93,23 @@ function validateUsageSections(value) {
         rejectUsageRecord('models capability');
 }
 
-function validateQuotaWindows(value) {
+function validateLimitExtras(value) {
+    const {retryAt, estimate} = value.limits;
+    if (retryAt !== undefined)
+        assertNonNegativeNumber(retryAt, 'limits retry time', {nullable: true, integer: true});
+    if (estimate === undefined || estimate === null)
+        return;
+    assertObjectShape(estimate, 'limits estimate', ['basedOn', 'windows']);
+    assertNonNegativeNumber(estimate.basedOn, 'limits estimate basis', {integer: true});
+    if (!Array.isArray(estimate.windows) || !estimate.windows.length || estimate.windows.length > MAX_WINDOWS ||
+        !value.capabilities.limits)
+        rejectUsageRecord('limits estimate windows');
+    validateQuotaWindows(estimate.windows);
+}
+
+function validateQuotaWindows(items) {
     const windows = new Set();
-    for (const item of value.limits.windows) {
+    for (const item of items) {
         assertObjectShape(item, 'quota window', [
             'id', 'label', 'usedPercent', 'used', 'limit', 'unit', 'unlimited', 'state', 'durationMinutes', 'resetsAt',
         ]);
@@ -135,11 +149,19 @@ function validateDailyActivity(value) {
     const dates = new Set();
     let previousDate = null;
     for (const item of value.history.days) {
-        assertObjectShape(item, 'daily entry', ['date', 'total', 'sessions', 'events']);
+        assertObjectShape(item, 'daily entry', ['date', 'total', 'sessions', 'events', 'models']);
         assertIsoDate(item.date, 'daily date');
         assertNonNegativeNumber(item.total, 'daily total', {integer: true});
         assertNonNegativeNumber(item.sessions, 'daily sessions', {integer: true});
         assertNonNegativeNumber(item.events, 'daily events', {integer: true});
+        if (item.models !== undefined) {
+            validateModels(item.models);
+            const total = item.models.reduce((sum, model) => sum + model.total, 0);
+            if (total > item.total || (value.history.status === 'ready' && total !== item.total))
+                rejectUsageRecord('daily model totals');
+            if (item.models.length && !value.capabilities.models)
+                rejectUsageRecord('models capability');
+        }
         if (dates.has(item.date) || (previousDate && item.date <= previousDate) ||
             item.date < value.history.period.start || item.date > value.history.period.end)
             rejectUsageRecord('daily ordering');
@@ -148,9 +170,11 @@ function validateDailyActivity(value) {
     }
 }
 
-function validateModelActivity(value) {
+function validateModels(items) {
+    if (!Array.isArray(items) || items.length > MAX_MODELS)
+        rejectUsageRecord('model collection bounds');
     const models = new Set();
-    for (const item of value.history.models) {
+    for (const item of items) {
         assertObjectShape(item, 'model entry', ['model', 'total', 'input', 'output', 'cacheRead', 'cacheWrite']);
         assertText(item.model, 'model name', {max: 160});
         for (const field of ['total', 'input', 'output', 'cacheRead', 'cacheWrite'])
@@ -164,9 +188,10 @@ function validateModelActivity(value) {
 export function validateUsageRecord(value, expectedProviderId) {
     validateRecordIdentity(value, expectedProviderId);
     validateUsageSections(value);
-    validateQuotaWindows(value);
+    validateQuotaWindows(value.limits.windows);
+    validateLimitExtras(value);
     validateHistoryPeriod(value);
     validateDailyActivity(value);
-    validateModelActivity(value);
+    validateModels(value.history.models);
     return value;
 }

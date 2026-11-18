@@ -4,11 +4,13 @@ import {aggregateEvents} from '../core/activity.js';
 import {getRecentDates} from '../core/dates.js';
 import {createUsageSection} from '../core/usage.js';
 import {parseSafeInteger} from '../core/values.js';
-import {buildPath, cacheDirectory, fingerprint, readJson, writeJson} from './files.js';
+import {buildPath, cacheDirectory, fingerprint} from './files.js';
+import {readJson, writeJson} from './syncFiles.js';
 import {createHistoryFileState, normalizeCachedHistoryFile, privateIdentity, sanitizeHistoryEvent} from './historyCache.js';
 import {readHistoryFile} from './historyReader.js';
 
-const CACHE_VERSION = 6;
+// Version 7 adds per-event timestamps used for quota estimates.
+const CACHE_VERSION = 7;
 const MAX_DEPTH = 12;
 const MAX_FILES = 20000;
 const MAX_MODELS = 128;
@@ -55,11 +57,11 @@ function listFiles(root, output, deadline, depth = 0) {
 }
 
 export function scanJsonlHistory(id, roots, parse, {retention = 30, now = Date.now(), cachePath = null,
-    oversizedRecordMayAffectUsage = () => true} = {}) {
+    oversizedRecordMayAffectUsage = () => true, onEvents = null} = {}) {
     if (!Number.isSafeInteger(retention) || retention < 7 || retention > 90 ||
         !Number.isSafeInteger(now) || now <= 0 || !Array.isArray(roots) || !roots.length ||
         roots.some(root => typeof root !== 'string' || !root) || typeof parse !== 'function' ||
-        typeof oversizedRecordMayAffectUsage !== 'function' ||
+        typeof oversizedRecordMayAffectUsage !== 'function' || (onEvents !== null && typeof onEvents !== 'function') ||
         (cachePath !== null && (typeof cachePath !== 'string' || !cachePath)))
         throw new Error('Invalid history scan options');
     const cutoff = getRecentDates(now, retention)[0];
@@ -145,6 +147,7 @@ export function scanJsonlHistory(id, roots, parse, {retention = 30, now = Date.n
     } catch {
         partial = true;
     }
+    onEvents?.(events);
     const sourceAvailable = files.length > 0;
     const hasCachedEvents = !sourceAvailable && events.length > 0;
     const status = sourceAvailable ? partial ? 'partial' : 'ready' : hasCachedEvents ? 'stale' : 'unsupported';
@@ -155,12 +158,16 @@ export function scanJsonlHistory(id, roots, parse, {retention = 30, now = Date.n
                     detected ? 'No local usage records found yet.' : 'No local usage records found.'),
     updatedAt: sourceAvailable ? now : hasCachedEvents ? parseSafeInteger(cached.updatedAt) : null,
     scope: 'local', source: `${id} local usage records`,
-    ...aggregateEvents(events, now), scannedFiles: parsed};
-    if (result.models.length > MAX_MODELS) {
+    ...aggregateEvents(events, now, retention), scannedFiles: parsed};
+    if (result.models.length > MAX_MODELS || result.days.some(day => day.models.length > MAX_MODELS)) {
         result.models = result.models.slice(0, MAX_MODELS);
+        for (const day of result.days)
+            day.models = day.models.slice(0, MAX_MODELS);
         result.status = 'partial';
         result.message = 'Model totals were truncated to keep local history bounded.';
     }
+    if (!sourceAvailable || partial)
+        result.days = result.days.filter(day => day.events > 0);
     if ((!sourceAvailable || partial) && !events.length) {
         result.days = [];
         result.models = [];

@@ -26,6 +26,7 @@
 .usagebeam-panel-value.usagebeam-caution { color: #e8c65d; }
 .usagebeam-panel-value.usagebeam-warning { color: #ee9d50; }
 .usagebeam-panel-value.usagebeam-danger { color: #f05f78; }
+.usagebeam-panel-value.usagebeam-panel-value-stale { font-style: italic; }
 .usagebeam-panel-value.usagebeam-caution.usagebeam-light { color: #7a5b00; }
 .usagebeam-panel-value.usagebeam-warning.usagebeam-light { color: #9a4f00; }
 .usagebeam-panel-value.usagebeam-danger.usagebeam-light { color: #b32638; }

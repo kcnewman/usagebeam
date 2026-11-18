@@ -127,7 +127,7 @@ export default class UsageBeamUITest extends Extension {
         await this._wait();
         assert([...indicator._providers.keys()].join(',') === 'codex,claude', 'Provider rows do not match the enabled list');
         assert([...indicator._providers.values()].every(state => !state.item.menu.isOpen), 'Menu opens expanded');
-        assert(matching(indicator.menu.box, 'usagebeam-icon-action').length === 3, 'Footer must contain three actions');
+        assert(matching(indicator.menu.box, 'usagebeam-icon-action').length === 4, 'Footer must contain four actions');
         const collapsed = bounds(indicator.menu.actor);
         for (const [id, state] of indicator._providers) {
             assert(state.reset.visible && state.reset.label.text.length > 0,
@@ -192,7 +192,7 @@ export default class UsageBeamUITest extends Extension {
         assert(codex.item.menu.isOpen && codex.details.actor.visible, 'Right arrow does not expand Activity');
         assert(matching(codex.details.box, 'usagebeam-model-row').length === 3, 'Missing model rows');
         assert(matching(codex.details.box, 'usagebeam-day-row').length === 0, 'Daily rows remain in the compact activity view');
-        assert(codex.activity.accessible_name.startsWith('Activity (7d)'), 'Activity period is unclear');
+        assert(codex.activity.label.text === 'Activity' && codex.activity.accessible_name.includes('today'), 'Activity period is unclear');
         assert(!codex.activity.label.clutter_text.get_layout().is_ellipsized(), 'Activity title is clipped');
         const quotaRows = matching(codex.item.menu.box, 'usagebeam-limit-row');
         const values = [...quotaRows.map(row => row.valueLabel),
@@ -245,6 +245,42 @@ export default class UsageBeamUITest extends Extension {
         for (let iteration = 0; iteration < 30; iteration++)
             indicator.render();
         assert(descendants(indicator.menu.box).length === count, 'Refresh grows the actor tree');
+        indicator._historyButton.emit('clicked', 1);
+        await this._wait();
+        const history = indicator._historyPane;
+        assert(indicator._historyVisible && history.menu.isOpen && !codex.item.visible,
+            'History does not replace provider rows');
+        assert(history.label.text === 'Codex History' && history._days.length === 7,
+            'History is missing retained daily rows');
+        assert(history._days[0].row.label.text === 'Today' &&
+            history._days.every(day => !day.details.actor.visible), 'History must start collapsed, newest first');
+        history._days[0].row.activate();
+        await this._wait();
+        assert(history._days[0].details.actor.visible &&
+            matching(history._days[0].details.box, 'usagebeam-model-row').length === 3,
+        'Today does not expand into daily models');
+        history._days[1].row.activate();
+        await this._wait();
+        assert(!history._days[0].details.actor.visible && history._days[1].details.actor.visible,
+            'History expands more than one day');
+        history._days[1].row.grab_key_focus();
+        records.codex.history.updatedAt++;
+        records.codex.history.days.at(-2).sessions++;
+        indicator.render();
+        await this._wait();
+        assert(history._days[1].row.has_key_focus() && history._days[1].details.actor.visible,
+            'History refresh loses date focus or expansion');
+        const footerBounds = bounds(indicator._historyButton);
+        const popupBounds = bounds(indicator.menu.actor);
+        assert(footerBounds.y + footerBounds.height <= popupBounds.y + popupBounds.height,
+            'History pushes the footer outside the popup');
+        await this._screenshot('history');
+        history.grab_key_focus();
+        await pressKey(Clutter.KEY_Left);
+        assert(!indicator._historyVisible && codex.item.visible && codex.item.menu.isOpen,
+            'History back does not restore the provider view');
+        codex.activity.activate();
+        await this._wait();
         const interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
         const originalScheme = interfaceSettings.get_string('color-scheme');
         for (const variant of ['dark', 'light']) {
@@ -286,6 +322,20 @@ export default class UsageBeamUITest extends Extension {
         assert(claude.item.menu.isOpen && !codex.item.menu.isOpen, 'Accordion has multiple open providers');
         assert(settings.get_string('default-provider') === 'claude', 'Expansion does not select provider');
         assert(indicator._terminalButton.accessible_name === 'Open Claude Code in terminal', 'Launcher target is unclear');
+        indicator._historyButton.emit('clicked', 1);
+        await this._wait();
+        const claudeHistory = indicator._historyPane;
+        assert(claudeHistory.label.text === 'Claude Code History' &&
+            claudeHistory._days[0].date === records.claude.history.days.at(-1).date,
+        'History does not switch to the selected Claude provider');
+        claudeHistory._days[0].row.activate();
+        await this._wait();
+        assert(matching(claudeHistory._days[0].details.box, 'usagebeam-model-row').length ===
+            records.claude.history.days.at(-1).models.length, 'Claude History loses its daily model breakdown');
+        await this._screenshot('claude-history');
+        claudeHistory.activate();
+        await this._wait();
+        assert(claude.item.menu.isOpen && !codex.item.menu.isOpen, 'History returns to the wrong provider');
         indicator._refreshButton.emit('clicked', 1);
         assert(forcedRefresh === true, 'Refresh does not force a refresh');
         refreshing = true;
@@ -319,7 +369,9 @@ export default class UsageBeamUITest extends Extension {
         assert(notification?.source === notifications._source, 'Usage notification was not displayed');
         assert(tray._banner.has_style_class_name('usagebeam-toast'), 'Usage toast keeps the large default size');
         const remaining = GLib.MainContext.default().find_source_by_id(tray._notificationTimeoutId).get_ready_time() - GLib.get_monotonic_time();
-        assert(remaining > 7_000_000 && remaining <= 8_000_000, 'Usage toast did not receive its extended display time');
+        // HiDPI rendering can delay this observation after the banner appears.
+        assert(remaining > 6_000_000 && remaining <= 8_000_000,
+            `Usage toast did not receive its extended display time: ${remaining}`);
         assert(notification.title === 'Codex' && notification.body === '5h Session 100%',
             'Usage toast contains verbose text');
         await this._screenshot('notification');

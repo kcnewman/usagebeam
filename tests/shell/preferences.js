@@ -30,6 +30,18 @@ const {general, details} = buildPreferencesWindow(window, settings, () => { clea
     limits: {status: 'ready', updatedAt: Date.now()},
     history: {status: 'partial', updatedAt: Date.now(), message: warning}}));
 
+// Saved records load asynchronously, so let pending promises and idle work finish.
+async function settleUi() {
+    for (let pass = 0; pass < 5; pass++) {
+        await new Promise(resolve => GLib.idle_add(GLib.PRIORITY_LOW, () => {
+            resolve();
+            return GLib.SOURCE_REMOVE;
+        }));
+        while (GLib.MainContext.default().iteration(false));
+    }
+}
+
+await settleUi();
 const allWidgets = () => [...descendants(general), ...descendants(details)];
 let widgets = allWidgets();
 assert(widgets.some(widget => widget instanceof Adw.ActionRow && widget.subtitle === warning),
@@ -43,7 +55,7 @@ assert(widgets.filter(widget => widget instanceof Adw.SpinRow).length === 3,
 
 settings.set_strv('provider-order', ['claude', 'codex']);
 settings.set_strv('enabled-providers', ['claude']);
-while (GLib.MainContext.default().iteration(false));
+await settleUi();
 widgets = allWidgets();
 const providers = widgets.filter(widget => widget instanceof Adw.SwitchRow &&
     ['Claude Code', 'Codex'].includes(widget.title));
@@ -53,6 +65,7 @@ const selected = widgets.find(widget => widget instanceof Adw.ComboRow && widget
 assert(selected?.model?.get_n_items() === 1, 'Panel provider must include enabled providers only');
 
 settings.set_strv('enabled-providers', []);
+await settleUi();
 assert(!selected.sensitive, 'Empty providers must disable panel selection');
 assert(descendants(details).some(widget => widget instanceof Adw.ActionRow && widget.title === 'No providers enabled'),
     'Empty provider diagnostics are missing');
@@ -104,6 +117,7 @@ assert(clears === 0 && settings.get_uint('clear-data-generation') === generation
 await wait(300);
 clear.emit('clicked');
 window.get_visible_dialog().emit('response', 'clear');
+await settleUi();
 window.get_visible_dialog().close();
 assert(clears === 1 && settings.get_uint('clear-data-generation') === generation + 1, 'Confirmed clear does not invalidate saved usage');
 

@@ -1,9 +1,12 @@
 import {getLocalDate, normalizeTimestamp} from '../core/dates.js';
+import {calibrateLimits, estimateLimits} from '../core/limitEstimate.js';
+import {getRateLimitRetryAt} from '../core/refreshPolicy.js';
 import {createQuotaWindow, createUsageRecord, createUsageSection} from '../core/usage.js';
 import {parseNonNegativeNumber, sanitizeText} from '../core/values.js';
 
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const MAX_WINDOWS = 32;
+const CALIBRATION_STATE = 'claude-calibration';
 
 function planLabel(tier, subscription) {
     const match = sanitizeText(tier, '', 160)?.match(/max_(\d+x)/i);
@@ -121,14 +124,22 @@ export function parseClaudeEvent(entry, state) {
     state.model = model;
     const identity = message.id ?? entry.messageId ?? entry.uuid ?? entry.requestId ?? `${timestamp}:${JSON.stringify(usage)}`;
     return {id: `${state.session}:${identity}`, session: state.session, date, model,
-        input, output, cacheRead, cacheWrite};
+        at: normalizeTimestamp(timestamp), input, output, cacheRead, cacheWrite};
+}
+
+function loadCalibration(context, accountKey) {
+    const saved = context.loadState?.(CALIBRATION_STATE);
+    return saved?.accountKey === accountKey && saved.windows && typeof saved.windows === 'object'
+        ? saved.windows : null;
 }
 
 export async function collectClaude(context) {
     const now = context.now?.() ?? Date.now();
     const result = createUsageRecord('claude');
     result.capabilities = {limits: true, history: true, models: true};
-    result.history = context.scan('claude', ['projects'], parseClaudeEvent);
+    const events = [];
+    result.history = context.scan('claude', ['projects'], parseClaudeEvent,
+        {onEvents: items => events.push(...items)});
     const login = parseClaudeLogin(context.credentials('claude'));
     result.plan = login.plan;
     if (!login.token) {
@@ -138,8 +149,19 @@ export async function collectClaude(context) {
         return result;
     }
     result.accountKey = context.fingerprint(login.token);
+    const calibration = loadCalibration(context, result.accountKey);
+    const withEstimate = section => {
+        const estimate = estimateLimits(calibration, events, now);
+        return estimate ? {...section, estimate} : section;
+    };
+    if (context.skipLimits) {
+        // The service keeps the previous limits; only a fresh projection is reported.
+        result.limits = withEstimate({...result.limits, ...createUsageSection('loading', '')});
+        return result;
+    }
     if (login.expiresAt && login.expiresAt <= now) {
-        result.limits = {...result.limits, ...createUsageSection('missing-auth', 'Claude Code sign-in expired. Start Claude Code or run claude auth login.')};
+        result.limits = withEstimate({...result.limits,
+            ...createUsageSection('missing-auth', 'Claude Code sign-in expired. Start Claude Code or run claude auth login.')});
         return result;
     }
     try {
@@ -150,14 +172,27 @@ export async function collectClaude(context) {
         }});
         if (response.status === 200) {
             result.limits = parseClaudeLimits(response.data, now);
+            if (['ready', 'partial'].includes(result.limits.status)) {
+                try {
+                    context.saveState?.(CALIBRATION_STATE, {accountKey: result.accountKey,
+                        windows: calibrateLimits(result.limits.windows, events, now, calibration)});
+                } catch {
+                    /* Estimates are optional; a live reading must not fail on them. */
+                }
+            }
+        } else if (response.status === 429) {
+            result.limits = withEstimate({...result.limits,
+                ...createUsageSection('unavailable', 'Anthropic is rate limiting usage checks. Showing the last reading.'),
+                retryAt: getRateLimitRetryAt(response.retryAfterMs, now)});
         } else {
-            result.limits = {...result.limits, ...createUsageSection([401, 403].includes(response.status) ? 'missing-auth' : 'unavailable',
-                [401, 403].includes(response.status) ? 'Reconnect Claude Code to read account limits.' :
-                    response.status === 429 ? 'Anthropic is rate limiting usage checks. Local history is still available.' :
-                        `Claude usage endpoint unavailable (HTTP ${response.status}).`)};
+            const auth = [401, 403].includes(response.status);
+            result.limits = withEstimate({...result.limits, ...createUsageSection(auth ? 'missing-auth' : 'unavailable',
+                auth ? 'Reconnect Claude Code to read account limits.' :
+                    `Claude usage endpoint unavailable (HTTP ${response.status}).`)});
         }
     } catch {
-        result.limits = {...result.limits, ...createUsageSection('unavailable', 'Could not reach Claude usage. Local history is still available.')};
+        result.limits = withEstimate({...result.limits,
+            ...createUsageSection('unavailable', 'Could not reach Claude usage. Showing the last reading.')});
     }
     return result;
 }

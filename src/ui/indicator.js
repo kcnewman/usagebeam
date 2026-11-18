@@ -5,11 +5,13 @@ import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import {formatModelName, formatTokenCount} from '../core/format.js';
+import {formatTokenCount, formatUpdateAge} from '../core/format.js';
+import {getLocalDate} from '../core/dates.js';
 import {PROVIDERS} from '../core/providerRegistry.js';
 import {UsageBeamPanelReadout} from './panelReadout.js';
 import {createDetailRow, createIconAction, createResetMetric, createRowHeading, UsageBeamActivityItem} from './menuWidgets.js';
-import {getHistoryOverview, getPanelQuota, getProviderStatus, getQuotaPresentation} from './presentation.js';
+import {getDisplayWindows, getTodayActivity, getPanelQuota, getProviderStatus, getQuotaPresentation} from './presentation.js';
+import {addModelRows, UsageBeamHistoryPane} from './historyPane.js';
 import {createMetricLabel, createProviderIcon, createSymbolicIcon} from './widgets.js';
 
 export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator extends PanelMenu.Button {
@@ -31,6 +33,7 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
                 this.render();
                 this._service?.refreshAll();
             } else {
+                this._setHistoryVisible(false);
                 for (const state of this._providers.values()) {
                     state.item.menu.close();
                     this._setActivityExpanded(state, false);
@@ -61,11 +64,11 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
             const current = this._service.recordFor(id);
             const busy = this._service.isRefreshing(id);
             const quota = getPanelQuota(current);
-            state.value.text = quota ? `${quota.percent}%` : getProviderStatus(current, busy);
+            state.value.text = quota?.text ?? getProviderStatus(current, busy);
             state.reset.setCountdown(quota?.reset);
             state.reset.visible = Boolean(quota);
             state.item.accessible_name = `${PROVIDERS[id].name}, ${state.value.text}${quota ? `, reset ${state.reset.label.text}` : ''}`;
-            const key = JSON.stringify(current);
+            const key = `${getLocalDate(Date.now())}:${JSON.stringify(current)}`;
             if (state.recordKey !== key) {
                 this._renderDetails(state, current);
                 state.recordKey = key;
@@ -73,6 +76,12 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
             for (const row of state.quotas)
                 row.setReset(getQuotaPresentation(row.quotaWindow).reset);
         }
+        if (this._historyVisible)
+            this._historyPane.update(PROVIDERS[this._selectedProvider]?.name ?? '', record?.history, Date.now());
+        this._historyButton.reactive = Boolean(this._selectedProvider);
+        this._historyButton.can_focus = Boolean(this._selectedProvider);
+        this._historyButton.setActionName(this._selectedProvider
+            ? `View ${PROVIDERS[this._selectedProvider].name} history` : 'Enable a provider to view history');
         const refreshing = enabled.some(id => this._service.isRefreshing(id));
         this._refreshButton.reactive = !refreshing;
         this._refreshButton.can_focus = !refreshing;
@@ -99,6 +108,7 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
             this.grab_key_focus();
         this.menu.removeAll();
         this._providers.clear();
+        this._historyVisible = false;
         this._providerKey = enabled.join(',');
         for (const id of enabled) {
             const item = new PopupMenu.PopupSubMenuMenuItem(PROVIDERS[id].name, true);
@@ -135,6 +145,10 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
         }
         if (!enabled.length)
             this.menu.addMenuItem(createDetailRow('Enable a provider in Settings.'));
+        this._historyPane = new UsageBeamHistoryPane(this._extensionPath,
+            () => this._setHistoryVisible(false), () => this.resize());
+        this.menu.addMenuItem(this._historyPane);
+        this._historyPane.hide();
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         const footer = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
         footer.add_style_class_name('usagebeam-footer');
@@ -142,13 +156,15 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
             layout_manager: new Clutter.BoxLayout({homogeneous: true})});
         this._refreshButton = createIconAction('view-refresh-symbolic', 'Refresh usage',
             () => this._service?.refreshAll(true));
+        this._historyButton = createIconAction('document-open-recent-symbolic', 'View history',
+            () => this._setHistoryVisible(!this._historyVisible));
         this._terminalButton = createIconAction('utilities-terminal-symbolic', 'Open provider in terminal',
             () => this._openTerminal());
         const preferences = createIconAction('preferences-system-symbolic', 'Open UsageBeam settings', () => {
             this.menu.close();
             this._openPreferences();
         });
-        for (const button of [this._refreshButton, this._terminalButton, preferences]) {
+        for (const button of [this._refreshButton, this._historyButton, this._terminalButton, preferences]) {
             const slot = new St.Bin({x_expand: true});
             button.x_align = Clutter.ActorAlign.CENTER;
             slot.set_child(button);
@@ -172,7 +188,8 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
         state.activity = state.details = null;
         state.quotas = [];
         if (record) {
-            for (const window of record.limits.windows) {
+            const windows = getDisplayWindows(record);
+            for (const window of windows) {
                 const view = getQuotaPresentation(window);
                 if (!view)
                     continue;
@@ -184,11 +201,15 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
                 state.quotas.push(row);
                 menu.addMenuItem(row);
             }
-            if (record.limits.status !== 'ready')
-                this._addMessage(menu, record.limits.message || 'Account limits unavailable.');
-            const overview = getHistoryOverview(record.history);
+            if (record.limits.status !== 'ready') {
+                const age = record.limits.status === 'stale' ? ` Last reading: ${formatUpdateAge(record.limits.updatedAt).replace(/^Updated /, '')}.` : '';
+                const estimated = windows.some(window => window.source === 'estimate')
+                    ? ' Values marked ~ are estimated from local activity.' : '';
+                this._addMessage(menu, `${record.limits.message || 'Account limits unavailable.'}${age}${estimated}`);
+            }
+            const overview = getTodayActivity(record.history);
             if (overview) {
-                const label = 'Activity (7d)';
+                const label = 'Activity';
                 state.activity = new UsageBeamActivityItem(label, formatTokenCount(overview.total),
                     createSymbolicIcon('activity', this._extensionPath),
                     expanded => { this._setActivityExpanded(state, expanded); this.resize(); });
@@ -196,22 +217,18 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
                 state.details = new PopupMenu.PopupMenuSection();
                 state.details.box.add_style_class_name('usagebeam-model-details');
                 menu.addMenuItem(state.details);
+                state.activity.accessible_name += ', today on this device';
                 if (record.history.message)
                     state.activity.accessible_name += `. ${record.history.message}`;
-                for (const model of record.history.models) {
-                    const name = formatModelName(model.model);
-                    state.details.addMenuItem(createDetailRow(name, formatTokenCount(model.total), {
-                        style: 'usagebeam-model-row',
-                        icon: createSymbolicIcon('model', this._extensionPath),
-                        description: `${name}, ${model.total} tokens. Input ${model.input}, output ${model.output}, cache read ${model.cacheRead}, cache write ${model.cacheWrite}.`,
-                    }));
-                }
+                addModelRows(state.details, overview.models ?? [], this._extensionPath);
+                if (!overview.models)
+                    state.details.addMenuItem(createDetailRow('Refresh for model details', '', {secondary: true}));
                 this._setActivityExpanded(state, state.activityExpanded);
             } else {
                 state.activity = state.details = null;
                 state.activityExpanded = false;
             }
-            if (!overview && record.history.status !== 'ready')
+            if (!overview)
                 menu.addMenuItem(createDetailRow('Activity unavailable', '', {secondary: true,
                     description: record.history.message || 'No local activity is available yet.'}));
         } else {
@@ -240,6 +257,44 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
             state.details.actor.visible = expanded;
     }
 
+    _setHistoryVisible(visible) {
+        if (!this._historyPane)
+            return;
+        visible = visible && Boolean(this._selectedProvider);
+        if (visible && !this._historyVisible) {
+            this._previousOpenProvider = [...this._providers.values()].find(state => state.item.menu.isOpen)?.id;
+            this._historyPane.reset();
+        }
+        this._historyVisible = visible;
+        for (const state of this._providers.values()) {
+            if (visible) {
+                state.item.menu.close();
+                state.item.hide();
+            } else {
+                state.item.show();
+            }
+        }
+        if (visible) {
+            const record = this._service.recordFor(this._selectedProvider);
+            this._historyPane.update(PROVIDERS[this._selectedProvider].name, record?.history, Date.now());
+            this._historyPane.show();
+            this._historyPane.menu.open();
+            this._historyPane.grab_key_focus();
+            this._historyButton.add_style_pseudo_class('checked');
+        } else {
+            this._historyPane.menu.close();
+            this._historyPane.hide();
+            this._historyButton?.remove_style_pseudo_class('checked');
+            if (this.menu.isOpen && this._previousOpenProvider) {
+                const previous = this._providers.get(this._previousOpenProvider);
+                previous?.item.menu.open();
+                previous?.item.grab_key_focus();
+            }
+            this._previousOpenProvider = null;
+        }
+        this.resize();
+    }
+
     resize() {
         if (!this.menu.isOpen)
             return;
@@ -264,7 +319,8 @@ export const UsageBeamIndicator = GObject.registerClass(class UsageBeamIndicator
         this.menu.box.style = `width: ${width}px;`;
         this.menu.actor.style = `max-height: ${Math.floor(work.height / scale - 16)}px;`;
         const submenus = [...this._providers.values()].map(state => state.item.menu.actor);
-        const fixed = this.menu.box.get_children().filter(actor => !submenus.includes(actor))
+        submenus.push(this._historyPane.menu.actor);
+        const fixed = this.menu.box.get_children().filter(actor => actor.visible && !submenus.includes(actor))
             .reduce((height, actor) => height + actor.get_preferred_height(width * scale)[1], 0);
         const available = Math.max(60, Math.floor((work.height - fixed) / scale - 64));
         for (const actor of submenus) {

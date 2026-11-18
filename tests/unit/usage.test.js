@@ -9,7 +9,7 @@ import {
 } from '../../src/core/format.js';
 import {QuotaThresholdTracker, formatNotificationBody} from '../../src/core/notifications.js';
 import {getEnabledProviders, normalizeProviderOrder} from '../../src/core/providerRegistry.js';
-import {createQuotaWindow, createUsageRecord, mergeUsageRecords} from '../../src/core/usage.js';
+import {collectionNeedsBackoff, createQuotaWindow, createUsageRecord, mergeUsageRecords} from '../../src/core/usage.js';
 import {validateUsageRecord} from '../../src/core/usageValidation.js';
 import {parseNonNegativeNumber} from '../../src/core/values.js';
 
@@ -62,6 +62,15 @@ test('contract accepts complete records and rejects unsafe cached shapes', () =>
             {date: '2026-09-06', total: 10, sessions: 1, events: 1}],
         models: [{model: 'test-model', total: 10, input: 6, output: 4, cacheRead: 0, cacheWrite: 0}]};
     assert.equal(validateUsageRecord(value, 'codex'), value);
+    value.history.days[0].models = [];
+    value.history.days[1].models = structuredClone(value.history.models);
+    assert.equal(validateUsageRecord(value, 'codex'), value);
+    const invalidDailyModels = structuredClone(value);
+    invalidDailyModels.history.days[1].models[0].input++;
+    assert.throws(() => validateUsageRecord(invalidDailyModels, 'codex'), /model totals/);
+    const mismatchedDay = structuredClone(value);
+    mismatchedDay.history.days[1].total++;
+    assert.throws(() => validateUsageRecord(mismatchedDay, 'codex'), /daily model totals/);
 
     const invalidDate = structuredClone(value);
     invalidDate.history.days[1].date = '2026-99-99';
@@ -120,12 +129,20 @@ test('stale quota windows are discarded after their reset', () => {
 
 test('daily and model totals use the same period and deduplicate events', () => {
     const event = {id: 'one', session: 'a', model: 'model-a', date: '2026-09-06', input: 20, output: 5, cacheRead: 10, cacheWrite: 0};
-    const result = aggregateEvents([event, event, {...event, id: 'older', date: '2026-08-01'}], new Date('2026-09-06T12:00:00').getTime());
-    assert.equal(result.days.length, 7);
+    const yesterday = {...event, id: 'yesterday', date: '2026-09-05', model: 'model-b'};
+    const events = [event, event, yesterday, {...event, id: 'older', date: '2026-08-01'}];
+    const now = new Date('2026-09-06T12:00:00').getTime();
+    const result = aggregateEvents(events, now);
+    assert.equal(result.days.length, 1);
     assert.equal(result.days.reduce((sum, d) => sum + d.total, 0), 35);
     assert.equal(result.models[0].total, 35);
     assert.equal(result.days.at(-1).sessions, 1);
-    assert.equal(result.period.start, '2026-08-31');
+    assert.equal(result.period.start, '2026-09-06');
+    assert.deepEqual(result.days[0].models, result.models);
+    const retained = aggregateEvents(events, now, 30);
+    assert.equal(retained.models.reduce((sum, model) => sum + model.total, 0), 70);
+    assert.equal(retained.days.at(-2).models[0].model, 'model-b');
+    assert.equal(retained.days.at(-1).models[0].model, 'model-a');
 });
 
 test('calendar buckets are consecutive across month boundaries', () => {
@@ -200,4 +217,31 @@ test('formatting preserves unknown/reset-due states', () => {
     assert.equal(formatResetCountdown(100 + 4 * 86400000 + 22 * 3600000, 100), '4d 22h');
     assert.equal(formatModelName('gpt-5.6-sol'), 'GPT 5.6 Sol');
     assert.equal(formatModelName('codex_auto-review'), 'Codex Auto Review');
+});
+
+test('rate limits carry their retry time and estimate without triggering collection backoff', () => {
+    const window = createQuotaWindow({id: 'five-hour', label: 'Session', usedPercent: 30, durationMinutes: 300,
+        resetsAt: 5_000_000});
+    const old = createUsageRecord('claude');
+    old.capabilities.limits = true;
+    old.accountKey = 'a'.repeat(64);
+    old.limits = {...old.limits, status: 'ready', updatedAt: 100, source: 'Anthropic OAuth usage', windows: [window]};
+    const next = createUsageRecord('claude');
+    next.capabilities.limits = true;
+    next.accountKey = old.accountKey;
+    const estimate = {basedOn: 100, windows: [{...window, usedPercent: 35}]};
+    next.limits = {...next.limits, status: 'unavailable', message: 'Rate limited', retryAt: 400_000, estimate};
+    assert.equal(collectionNeedsBackoff(next), false);
+    const merged = mergeUsageRecords(old, next, 1000);
+    assert.equal(merged.limits.status, 'stale');
+    assert.equal(merged.limits.retryAt, 400_000);
+    assert.equal(merged.limits.estimate, estimate);
+    assert.equal(validateUsageRecord(merged, 'claude'), merged);
+    const recovered = mergeUsageRecords(merged, {...next, limits: {...next.limits, retryAt: undefined, estimate: undefined}}, 1000);
+    assert.equal('retryAt' in recovered.limits || 'estimate' in recovered.limits, false);
+    delete next.limits.retryAt;
+    assert.equal(collectionNeedsBackoff(next), true);
+    assert.throws(() => validateUsageRecord({...merged, limits: {...merged.limits, retryAt: -1}}, 'claude'));
+    assert.throws(() => validateUsageRecord({...merged, limits: {...merged.limits,
+        estimate: {basedOn: 1, windows: [{...window, usedPercent: null}]}}}, 'claude'));
 });

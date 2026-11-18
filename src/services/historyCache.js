@@ -55,7 +55,8 @@ export function sanitizeHistoryEvent(event, provider, stored = false) {
         .map(field => [field, parseSafeInteger(event[field])]));
     if (Object.values(values).some(value => value === null))
         return null;
-    return {...values, date: event.date, model: event.model,
+    const at = event.at === undefined || event.at === null ? null : parseSafeInteger(event.at);
+    return {...values, ...(at ? {at} : {}), date: event.date, model: event.model,
         id: stored ? event.id : privateIdentity(provider, event.id),
         session: stored ? event.session : privateIdentity(provider, event.session)};
 }

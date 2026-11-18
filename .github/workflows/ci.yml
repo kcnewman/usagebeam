@@ -23,7 +23,8 @@ jobs:
       - name: Verify packaged schemas
         run: |
           unzip dist/*.zip -d "$RUNNER_TEMP/usagebeam-install"
-          test -f "$RUNNER_TEMP/usagebeam-install/schemas/gschemas.compiled"
+          test ! -e "$RUNNER_TEMP/usagebeam-install/schemas/gschemas.compiled"
+          glib-compile-schemas --strict "$RUNNER_TEMP/usagebeam-install/schemas"
           GSETTINGS_SCHEMA_DIR="$RUNNER_TEMP/usagebeam-install/schemas" gsettings list-keys org.gnome.shell.extensions.usagebeam
       - uses: actions/upload-artifact@v7
         with:

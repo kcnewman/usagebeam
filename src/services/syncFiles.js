@@ -1,0 +1,44 @@
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
+
+// Blocking file helpers for the collector subprocess only. Shell and
+// preferences code must use the asynchronous helpers in files.js.
+
+function readBoundedFileText(path, fallback = null, maxBytes = 16 * 1024 * 1024) {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0)
+        throw new Error('File size limit must be a positive integer');
+    try {
+        const file = Gio.File.new_for_path(path);
+        if (file.query_info('standard::size', Gio.FileQueryInfoFlags.NONE, null).get_size() > maxBytes)
+            return fallback;
+        const [, bytes] = file.load_contents(null);
+        if (bytes.length > maxBytes)
+            return fallback;
+        return new TextDecoder().decode(bytes);
+    } catch {
+        return fallback;
+    }
+}
+
+export function readJson(path, fallback = null, maxBytes = 16 * 1024 * 1024) {
+    const text = readBoundedFileText(path, null, maxBytes);
+    if (text === null)
+        return fallback;
+    try {
+        return JSON.parse(text);
+    } catch {
+        return fallback;
+    }
+}
+
+export function writeJson(path, value) {
+    const file = Gio.File.new_for_path(path);
+    const parent = file.get_parent();
+    const parentPath = parent?.get_path();
+    if (!parentPath || GLib.mkdir_with_parents(parentPath, 0o700) < 0 || GLib.chmod(parentPath, 0o700) < 0)
+        throw new Error('Could not secure the private data directory');
+    file.replace_contents(new TextEncoder().encode(JSON.stringify(value)), null, false,
+        Gio.FileCreateFlags.PRIVATE | Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+    if (GLib.chmod(path, 0o600) < 0)
+        throw new Error('Could not secure the private data file');
+}

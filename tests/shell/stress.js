@@ -14,6 +14,7 @@ export async function runStress({indicator, records, service, settings, assert, 
         id: `synthetic-${index}`, label: `Quota ${index + 1}`}));
     records.codex.history.models = Array.from({length: 48}, (_, index) => ({...original.history.models[0],
         model: `synthetic-model-${index}-${'long-name-'.repeat(8)}`}));
+    records.codex.history.days.at(-1).models = records.codex.history.models;
     records.codex.limits.windows[0].label = 'Very long quota heading '.repeat(6);
     indicator.render();
     codex.item.menu.open(animation);
@@ -44,6 +45,27 @@ export async function runStress({indicator, records, service, settings, assert, 
     assert(fit(indicator._terminalButton), 'Scrolling moves footer offscreen');
     await screenshot('long-content');
     const longContent = bounds(scroll);
+    const today = original.history.days.at(-1).date;
+    records.codex.history.days = Array.from({length: 90}, (_, index) => {
+        const date = new Date(`${today}T12:00:00`);
+        date.setDate(date.getDate() - (89 - index));
+        const stamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        return {...original.history.days.at(-1), date: stamp, models: records.codex.history.models};
+    });
+    indicator._historyButton.emit('clicked', 1);
+    await wait();
+    const history = indicator._historyPane;
+    history._days[89].row.activate();
+    history._days[89].details.box.get_last_child().grab_key_focus();
+    history.menu.actor.vadjustment.value = history.menu.actor.vadjustment.upper;
+    await wait();
+    assert(fit(indicator.menu.actor) && fit(indicator._historyButton), 'Long history hides the footer or exceeds the work area');
+    assert(history._days.filter(day => day.details.actor.visible).length === 1,
+        'Long history expands multiple days');
+    assert(history._days[89].details.box.get_children().every(row => fitsHorizontally(row.valueLabel)),
+        'History model metrics exceed their container');
+    await screenshot('history-long-content');
+    history.activate();
     records.codex = original;
     records.codex.limits.status = 'partial';
     records.codex.limits.message = `Account information unavailable. ${'Long explanatory text '.repeat(12)}${'x'.repeat(100)}`;

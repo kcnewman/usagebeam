@@ -59,6 +59,8 @@ def package(source, output):
     archive = output / f"{uuid}-{version}.zip"
     if archive.is_symlink():
         raise RuntimeError(f"Refusing to overwrite archive symlink: {archive}")
+    # GNOME 45+ compiles extension schemas at install time, so the compiled
+    # binary is not shipped; compiling here only validates the XML strictly.
     with tempfile.TemporaryDirectory(prefix="usagebeam-schemas-") as scratch:
         subprocess.run(
             [
@@ -73,12 +75,6 @@ def package(source, output):
         payloads = [
             (file.relative_to(source).as_posix(), file.read_bytes()) for file in files
         ]
-        payloads.append(
-            (
-                "schemas/gschemas.compiled",
-                (Path(scratch) / "gschemas.compiled").read_bytes(),
-            )
-        )
         expected = {name for name, _payload in payloads}
         if len(expected) != len(payloads):
             raise RuntimeError("Duplicate paths in extension package")
@@ -99,6 +95,8 @@ def package(source, output):
                 raise RuntimeError(
                     "Extension archive contents differ from the runtime allowlist"
                 )
+            if "schemas/gschemas.compiled" in names:
+                raise RuntimeError("Compiled schemas must not be shipped")
             if any(
                 name.startswith((".AGENTS/", ".github/", "docs/", "tests/", "tools/"))
                 for name in names
