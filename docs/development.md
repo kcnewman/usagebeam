@@ -40,15 +40,16 @@ correctness and bounded subprocess behavior. Add tests for data loss, wrong
 totals, privacy failures, or broken lifecycle—not trivial markup or getters.
 
 The only build path is `tools/package.py`. It creates a deterministic ZIP in
-`dist/`, including compiled schemas and runtime files only. Set the release
+`dist/` with runtime files and schema XML only; GNOME Shell compiles schemas
+at install time, so the compiled binary is never shipped. Set the release
 version in `package.json`; product identity stays in `metadata.json`.
 
 On a development machine with GNOME Shell 50, test the archive in a private
 desktop with synthetic data:
 
 ```sh
-python3 tools/smoke-shell.py --archive dist/usagebeam@oo7kc.github.io-2.1.0.zip
-python3 tools/smoke-shell.py --archive dist/usagebeam@oo7kc.github.io-2.1.0.zip --matrix
+python3 tools/smoke-shell.py --archive dist/usagebeam@oo7kc.github.io-2.2.0.zip
+python3 tools/smoke-shell.py --archive dist/usagebeam@oo7kc.github.io-2.2.0.zip --matrix
 ```
 
 The harness covers menu navigation, selection, refresh focus, long-content bounds,

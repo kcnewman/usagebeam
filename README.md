@@ -10,7 +10,7 @@ you've been using. UsageBeam keeps the essentials one click away while you work.
 ## At a glance
 
 - **Know your limits.** Check session and weekly allowances with time until renewal.
-- **See your activity.** Explore the past seven days of tokens, broken down by model.
+- **See your activity.** Check today's tokens by model and browse daily history.
 - **Get a heads-up.** Receive usage alerts at your chosen threshold.
 - **Keep moving.** Open your provider in a terminal directly from the menu.
 - **Feel at home.** A native GNOME look and feel.
@@ -25,7 +25,7 @@ Download the ZIP from [GitHub Releases](https://github.com/kcnewman/usagebeam/re
 then install it:
 
 ```sh
-gnome-extensions install --force ./usagebeam@oo7kc.github.io-2.1.0.zip
+gnome-extensions install --force ./usagebeam@oo7kc.github.io-2.2.0.zip
 ```
 
 Log out and back in, then enable UsageBeam:
@@ -41,12 +41,14 @@ settings are kept. The terminal shortcut requires a desktop terminal app.
 
 Click the panel indicator to see each provider's usage and reset time. Expand a
 provider to see its limits and make it the selected provider for the panel and
-terminal shortcut. Expand **Activity (7d)** to see tokens by model.
+terminal shortcut. Expand **Activity** to see today's tokens by model.
 
-![UsageBeam showing account limits and seven-day activity by model](docs/screenshot-activity.png)
+![UsageBeam showing account limits and activity by model](docs/screenshot-activity.png)
 
-The three buttons at the bottom refresh usage, open the selected provider in a
-terminal, and open settings.
+The four buttons at the bottom refresh usage, open History, open the selected
+provider in a terminal, and open settings. History shows daily token totals for
+the selected provider, newest first. Expand a day to see its model breakdown;
+only one day opens at a time. Use the back arrow to return to providers.
 
 In **General**, choose your providers, menu order, panel position, refresh
 interval and alerts. **Usage details** shows the latest saved status and any
@@ -59,12 +61,21 @@ usage or clear it. Your provider history and sign-in are kept when you clear dat
 that limit period. The time beside a heading is how long remains until it
 renews. Account limits can include usage from other devices.
 
-**Activity (7d)** is the total tokens recorded on this device over the past
-seven calendar days, including today. It includes input, output and cache tokens
+When a provider can't be reached, or is rate limiting usage checks, UsageBeam
+keeps showing the last reading in *italics*. After about 15 minutes, or once
+a limit period renews, it switches to an estimate such as **~47%**. Estimates
+project the activity recorded on this device since the last reading, so they
+don't include usage from other devices and may read low. Claude account limits
+are checked at most every five minutes, and less often while Anthropic is rate
+limiting.
+
+**Activity** is the total tokens recorded on this device today, from midnight
+according to your computer's local calendar. It includes input, output and cache tokens
 according to each provider's counting rules. **M** means million tokens.
 
 Activity is separate from your allowance percentage and isn't a cost estimate.
-Changing retention in settings doesn't change the seven-day view.
+Retention in settings controls how many days appear in History; Activity always
+shows today. Original screenshots above show the earlier seven-day interface.
 
 If some records can't be read, activity totals may be incomplete. Check
 **Settings → Usage details** for more information.
